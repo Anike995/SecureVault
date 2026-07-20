@@ -90,6 +90,20 @@
         </div>
     </div>
 
+    <div id="deleteModal" class="app-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+        <div class="app-modal-backdrop" onclick="closeDeleteDialog()"></div>
+        <div class="app-modal-card delete-modal-card">
+            <button class="modal-close" type="button" onclick="closeDeleteDialog()" aria-label="Close dialog">×</button>
+            <span class="modal-icon modal-icon-danger" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M10 11v5m4-5v5M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></span>
+            <h2 id="deleteModalTitle">Delete this file?</h2>
+            <p>This will permanently remove the encrypted file from your vault. This action cannot be undone.</p>
+            <div class="modal-actions">
+                <button id="cancelDeleteButton" type="button" class="btn btn-quiet" onclick="closeDeleteDialog()">Keep file</button>
+                <button id="deleteConfirmButton" type="button" class="btn btn-danger" onclick="deleteStoredFile()">Delete file</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>

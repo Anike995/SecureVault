@@ -108,6 +108,7 @@ function formatStoredAt(timestamp) {
 }
 
 let pendingDecryption = null;
+let pendingDeletion = null;
 
 function showToast(message, type = "info") {
     const container = document.getElementById("toastContainer");
@@ -136,6 +137,48 @@ function closeDecryptDialog() {
     modal.classList.remove("is-open");
     modal.setAttribute("aria-hidden", "true");
     pendingDecryption = null;
+}
+
+function openDeleteDialog(docId, button) {
+    const modal = document.getElementById("deleteModal");
+    if (!modal) return;
+    pendingDeletion = { docId, button };
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => document.getElementById("cancelDeleteButton")?.focus(), 50);
+}
+
+function closeDeleteDialog() {
+    const modal = document.getElementById("deleteModal");
+    if (!modal || document.getElementById("deleteConfirmButton")?.disabled) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    pendingDeletion = null;
+}
+
+async function deleteStoredFile() {
+    if (!pendingDeletion) return;
+    const { docId, button } = pendingDeletion;
+    const confirmButton = document.getElementById("deleteConfirmButton");
+    const cancelButton = document.getElementById("cancelDeleteButton");
+    setButtonLoading(button, true, "Deleting");
+    setButtonLoading(confirmButton, true, "Deleting");
+    cancelButton.disabled = true;
+
+    try {
+        await db.collection("files").doc(docId).delete();
+        document.getElementById("deleteModal").classList.remove("is-open");
+        document.getElementById("deleteModal").setAttribute("aria-hidden", "true");
+        pendingDeletion = null;
+        showToast("The encrypted file has been removed from your vault.", "success");
+    } catch (error) {
+        console.error("[SecureVault] File deletion failed", error);
+        showToast("The file could not be deleted. Please try again.", "error");
+    } finally {
+        setButtonLoading(button, false);
+        setButtonLoading(confirmButton, false);
+        cancelButton.disabled = false;
+    }
 }
 
 console.log("✅ Firebase connected (Option 2 Mode)");
@@ -200,6 +243,11 @@ async function encryptAndUpload() {
     }
 
     const file = fileInput.files[0];
+    console.info("[SecureVault] Encryption engine initialized", {
+        algorithm: "AES-GCM",
+        keyDerivation: "PBKDF2",
+        iterations: 100000
+    });
     setButtonLoading(uploadButton, true, "Encrypting and saving");
     fileInput.disabled = true;
     document.getElementById('encryptionPassword').disabled = true;
@@ -218,12 +266,14 @@ async function encryptAndUpload() {
             { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
             keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"]
         );
+        console.info("[SecureVault] PBKDF2 key derivation complete", { iterations: 100000, hash: "SHA-256" });
 
         // 3. Encrypt
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const encryptedContent = await crypto.subtle.encrypt(
             { name: "AES-GCM", iv: iv }, key, fileData
         );
+        console.info("[SecureVault] AES-GCM encryption successful", { ivBytes: iv.length });
 
         // 4. Convert to Base64 String (To store in Database as text)
         const combined = new Uint8Array(iv.length + encryptedContent.byteLength);
@@ -245,6 +295,7 @@ async function encryptAndUpload() {
             fileData: base64Data, // This is the actual encrypted file content
             uploadedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
+        console.info("[SecureVault] Cloud sync complete", { fileName: file.name });
 
         status.textContent = "";
         showToast("Your file has been encrypted and saved to the vault.", "success");
@@ -283,7 +334,10 @@ function loadVault() {
                           <h6 class="mb-0 text-primary">${file.fileName}</h6>
                           <small class="text-muted">Encrypted and saved ${formatStoredAt(file.uploadedAt)}</small>
                       </div>
-                      <button onclick="openDecryptDialog('${doc.id}', this)" class="btn btn-sm btn-success">Decrypt & Download</button>
+                      <div class="file-actions">
+                          <button onclick="openDecryptDialog('${doc.id}', this)" class="btn btn-sm btn-success">Decrypt & Download</button>
+                          <button onclick="openDeleteDialog('${doc.id}', this)" class="btn btn-sm btn-delete">Delete</button>
+                      </div>
                   </div>
               `;
           });
@@ -348,6 +402,16 @@ async function decryptAndDownload() {
             { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
             keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
         );
+
+        // Report-only integrity check: this changes a local copy, never the Firestore file.
+        const tamperedContent = encryptedContent.slice();
+        tamperedContent[0] ^= 1;
+        try {
+            await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, tamperedContent);
+            console.error("[SecureVault] Tamper-detection test: UNEXPECTED SUCCESS — modified ciphertext was accepted.");
+        } catch (tamperError) {
+            console.warn("[SecureVault] Tamper-detection test: FAILED — modified ciphertext rejected as expected.");
+        }
 
         // 5. Decrypt the data
         const decryptedContent = await crypto.subtle.decrypt(
