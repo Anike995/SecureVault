@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureVault — Your vault</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="dashboard-page">
+    <header class="app-header">
+        <div class="app-shell header-inner">
+            <a class="brand" href="dashboard.html" aria-label="SecureVault dashboard">
+                <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 2.9 8.7 7 10 4.1-1.3 7-5.5 7-10V6l-7-3Z"/><path d="M9.5 12 11 13.5l3.5-3.5"/></svg></span>
+                SecureVault
+            </a>
+            <div class="account-area">
+                <span class="account-avatar" aria-hidden="true">SV</span>
+                <span id="userEmail" class="user-email"></span>
+                <button id="logoutButton" class="btn btn-logout" onclick="handleLogout()">Sign out</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-shell dashboard-content">
+        <section class="page-heading">
+            <div>
+                <p class="eyebrow">Your private space</p>
+                <h1>Your vault</h1>
+                <p>Files are encrypted locally before they are saved to your account.</p>
+            </div>
+            <div class="encrypted-status"><span class="status-dot"></span> Encryption active</div>
+        </section>
+
+        <div class="vault-grid">
+            <section class="surface upload-card" aria-labelledby="upload-title">
+                <div class="surface-heading">
+                    <span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg></span>
+                    <div><h2 id="upload-title">Add a file</h2><p>Encrypt and store a new file in your vault.</p></div>
+                </div>
+                <div class="field-group">
+                    <label class="form-label" for="fileInput">Choose file</label>
+                    <input type="file" id="fileInput" class="form-control file-control">
+                </div>
+                <div class="field-group">
+                    <label class="form-label" for="encryptionPassword">Secret key</label>
+                    <div class="password-field">
+                        <input type="password" id="encryptionPassword" class="form-control" placeholder="Create a strong secret key" autocomplete="new-password">
+                        <button class="password-toggle" type="button" onclick="togglePasswordVisibility('encryptionPassword', this)" aria-label="Show secret key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                    </div>
+                    <p class="field-hint">Keep this key safe. It is required to download your file later.</p>
+                </div>
+                <button id="uploadButton" onclick="encryptAndUpload()" class="btn btn-primary btn-full">Encrypt and save <span aria-hidden="true">→</span></button>
+                <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
+            </section>
+
+            <section class="surface vault-card" aria-labelledby="vault-title">
+                <div class="surface-heading vault-heading">
+                    <div><p class="eyebrow">Stored files</p><h2 id="vault-title">Your encrypted files</h2></div>
+                    <span class="file-count">Private</span>
+                </div>
+                <div id="fileContainer" class="file-list">
+                    <div class="loading-state" role="status"><span class="spinner" aria-hidden="true"></span> Loading your vault…</div>
+                </div>
+            </section>
+        </div>
+        <p class="dashboard-footnote">SecureVault never stores the secret key used to encrypt your files.</p>
+    </main>
+
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="decryptModal" class="app-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="decryptModalTitle">
+        <div class="app-modal-backdrop" onclick="closeDecryptDialog()"></div>
+        <div class="app-modal-card">
+            <button class="modal-close" type="button" onclick="closeDecryptDialog()" aria-label="Close dialog">×</button>
+            <span class="modal-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+            <h2 id="decryptModalTitle">Unlock your file</h2>
+            <p>Enter the secret key you used when this file was encrypted.</p>
+            <form id="decryptForm" onsubmit="decryptAndDownload(); return false;">
+                <label class="form-label" for="decryptPassword">Secret key</label>
+                <div class="password-field">
+                    <input id="decryptPassword" class="form-control" type="password" autocomplete="current-password" placeholder="Enter your secret key" required>
+                    <button class="password-toggle" type="button" onclick="togglePasswordVisibility('decryptPassword', this)" aria-label="Show secret key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                </div>
+                <div class="modal-actions">
+                    <button id="cancelDecryptButton" type="button" class="btn btn-quiet" onclick="closeDecryptDialog()">Cancel</button>
+                    <button id="decryptConfirmButton" type="submit" class="btn btn-primary">Decrypt file</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

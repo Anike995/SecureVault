@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureVault — Create account</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="auth-page">
+    <main class="auth-layout">
+        <section class="auth-intro" aria-label="About SecureVault">
+            <a class="brand brand-light" href="index.html" aria-label="SecureVault home">
+                <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 2.9 8.7 7 10 4.1-1.3 7-5.5 7-10V6l-7-3Z"/><path d="M9.5 12 11 13.5l3.5-3.5"/></svg></span>
+                SecureVault
+            </a>
+            <div class="auth-intro-copy">
+                <p class="eyebrow eyebrow-light">Private by design</p>
+                <h1>Start protecting the files that matter.</h1>
+                <p>Create your private vault in a few moments. Your files are encrypted before they are stored.</p>
+            </div>
+            <div class="security-note">
+                <span class="note-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+                <span><strong>Client-side encryption</strong><br>Your secret key is never stored with your file.</span>
+            </div>
+        </section>
+
+        <section class="auth-panel">
+            <div class="auth-card">
+                <div class="auth-card-heading">
+                    <p class="eyebrow">Create your account</p>
+                    <h2>Set up your vault</h2>
+                    <p>Use an email address and a strong password to get started.</p>
+                </div>
+
+                <form onsubmit="handleSignUp(); return false;" novalidate>
+                    <div class="field-group">
+                        <label for="email" class="form-label">Email address</label>
+                        <input type="email" id="email" class="form-control" autocomplete="email" placeholder="you@example.com" required>
+                    </div>
+                    <div class="field-group">
+                        <label for="password" class="form-label">Password</label>
+                        <div class="password-field">
+                            <input type="password" id="password" class="form-control" autocomplete="new-password" placeholder="At least 6 characters" minlength="6" required>
+                            <button class="password-toggle" type="button" onclick="togglePasswordVisibility('password', this)" aria-label="Show password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                        </div>
+                        <p class="field-hint">Choose at least 6 characters.</p>
+                    </div>
+                    <button id="signupButton" type="submit" class="btn btn-primary btn-full">Create account <span aria-hidden="true">→</span></button>
+                </form>
+                <div id="message" class="form-message" role="status" aria-live="polite"></div>
+                <p class="auth-switch">Already have an account? <a href="auth.html">Sign in</a></p>
+                <p class="auth-footer">SecureVault keeps your files protected with end-to-end encryption.</p>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
