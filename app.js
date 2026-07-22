@@ -73,7 +73,7 @@ function getFriendlyAuthError(error, action) {
 
 function getFriendlyUploadError(error) {
     if (error?.code === "resource-exhausted") return "This file is too large for the available Firestore quota. Try a smaller file.";
-    if (error?.code === "permission-denied") return "You do not have permission to save this file. Please sign in again.";
+    if (error?.code === "permission-denied") return "Firestore security rules need updating before encrypted file chunks can be saved.";
     return "The file could not be encrypted and saved. Please try again.";
 }
 
