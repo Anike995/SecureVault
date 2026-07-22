@@ -13,6 +13,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const FIRESTORE_CHUNK_SIZE = 700 * 1024;
 
 function setButtonLoading(button, isLoading, label) {
     if (!button) return;
@@ -70,6 +71,12 @@ function getFriendlyAuthError(error, action) {
     return messages[code] || (action === "signup" ? "We could not create your account. Please try again." : "We could not sign you in. Please try again.");
 }
 
+function getFriendlyUploadError(error) {
+    if (error?.code === "resource-exhausted") return "This file is too large for the available Firestore quota. Try a smaller file.";
+    if (error?.code === "permission-denied") return "You do not have permission to save this file. Please sign in again.";
+    return "The file could not be encrypted and saved. Please try again.";
+}
+
 async function handlePasswordReset() {
     const email = document.getElementById("resetEmail").value.trim();
     const button = document.getElementById("resetButton");
@@ -105,6 +112,33 @@ function formatStoredAt(timestamp) {
         hour: "numeric",
         minute: "2-digit"
     }).format(timestamp.toDate());
+}
+
+function bytesToBase64(bytes) {
+    let binary = "";
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+async function deleteFileChunks(fileRef) {
+    const chunks = await fileRef.collection("chunks").get();
+    let batch = db.batch();
+    let operations = 0;
+    const commits = [];
+
+    chunks.forEach((chunk) => {
+        batch.delete(chunk.ref);
+        operations += 1;
+        if (operations === 450) {
+            commits.push(batch.commit());
+            batch = db.batch();
+            operations = 0;
+        }
+    });
+    if (operations > 0) commits.push(batch.commit());
+    await Promise.all(commits);
 }
 
 let pendingDecryption = null;
@@ -166,7 +200,11 @@ async function deleteStoredFile() {
     cancelButton.disabled = true;
 
     try {
-        await db.collection("files").doc(docId).delete();
+        const fileRef = db.collection("files").doc(docId);
+        const fileDoc = await fileRef.get();
+        if (!fileDoc.exists) throw new Error("File not found.");
+        await deleteFileChunks(fileRef);
+        await fileRef.delete();
         document.getElementById("deleteModal").classList.remove("is-open");
         document.getElementById("deleteModal").setAttribute("aria-hidden", "true");
         pendingDeletion = null;
@@ -230,12 +268,14 @@ async function handleLogout() {
     }
 }
 
-// --- THE ENCRYPTION ENGINE (OPTION 2: NO STORAGE NEEDED) ---
+// --- ENCRYPTION AND CLOUD STORAGE ENGINE ---
 async function encryptAndUpload() {
     const fileInput = document.getElementById('fileInput');
     const password = document.getElementById('encryptionPassword').value;
     const status = document.getElementById('uploadStatus');
     const uploadButton = document.getElementById('uploadButton');
+    let fileRef = null;
+    let metadataSaved = false;
 
     if (fileInput.files.length === 0 || !password) {
         showToast("Choose a file and enter a secret key to continue.", "error");
@@ -274,27 +314,31 @@ async function encryptAndUpload() {
             { name: "AES-GCM", iv: iv }, key, fileData
         );
         console.info("[SecureVault] AES-GCM encryption successful", { ivBytes: iv.length });
+        status.textContent = "Saving encrypted file securely…";
 
-        // 4. Convert to Base64 String (To store in Database as text)
+        // 4. Combine the IV and encrypted bytes for storage.
         const combined = new Uint8Array(iv.length + encryptedContent.byteLength);
         combined.set(iv);
         combined.set(new Uint8Array(encryptedContent), iv.length);
-        
-        // Convert binary to string safely
-        let binary = '';
-        const bytes = new Uint8Array(combined);
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        const base64Data = btoa(binary);
 
-        // 5. Save directly to Firestore
-        await db.collection("files").add({
+        // 5. Store encrypted bytes in Firestore-sized chunks before creating vault metadata.
+        fileRef = db.collection("files").doc();
+        const chunkCount = Math.ceil(combined.byteLength / FIRESTORE_CHUNK_SIZE);
+        for (let index = 0; index < chunkCount; index++) {
+            const start = index * FIRESTORE_CHUNK_SIZE;
+            const chunk = combined.slice(start, start + FIRESTORE_CHUNK_SIZE);
+            await fileRef.collection("chunks").doc(String(index).padStart(6, "0")).set({
+                data: bytesToBase64(chunk),
+                ownerID: auth.currentUser.uid
+            });
+        }
+        await fileRef.set({
             ownerID: auth.currentUser.uid,
             fileName: file.name,
-            fileData: base64Data, // This is the actual encrypted file content
+            chunkCount: chunkCount,
             uploadedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
+        metadataSaved = true;
         console.info("[SecureVault] Cloud sync complete", { fileName: file.name });
 
         status.textContent = "";
@@ -304,8 +348,15 @@ async function encryptAndUpload() {
         
     } catch (error) {
         console.error(error);
+        if (fileRef && !metadataSaved) {
+            try {
+                await deleteFileChunks(fileRef);
+            } catch (cleanupError) {
+                console.warn("[SecureVault] Could not clean up incomplete file chunks", cleanupError);
+            }
+        }
         status.textContent = "";
-        showToast(`The file could not be saved: ${error.message}`, "error");
+        showToast(getFriendlyUploadError(error), "error");
     } finally {
         setButtonLoading(uploadButton, false);
         fileInput.disabled = false;
@@ -374,19 +425,46 @@ async function decryptAndDownload() {
     cancelButton.disabled = true;
 
     try {
-        // 1. Get the encrypted data from Firestore
+        // 1. Get the encrypted file metadata from Firestore.
         const doc = await db.collection("files").doc(docId).get();
         if (!doc.exists) throw new Error("File not found!");
         
         const fileData = doc.data();
-        const base64Data = fileData.fileData;
         const fileName = fileData.fileName;
 
-        // 2. Convert Base64 back to Binary
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+        // 2. Reassemble encrypted bytes from Firestore chunks.
+        let bytes;
+        if (fileData.chunkCount) {
+            const chunksSnapshot = await doc.ref.collection("chunks")
+                .orderBy(firebase.firestore.FieldPath.documentId())
+                .get();
+            if (chunksSnapshot.size !== fileData.chunkCount) {
+                throw new Error("One or more encrypted file chunks are missing.");
+            }
+            const chunks = [];
+            let totalLength = 0;
+            chunksSnapshot.forEach((chunkDoc) => {
+                const binary = atob(chunkDoc.data().data);
+                const chunk = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) chunk[i] = binary.charCodeAt(i);
+                chunks.push(chunk);
+                totalLength += chunk.length;
+            });
+            bytes = new Uint8Array(totalLength);
+            let offset = 0;
+            chunks.forEach((chunk) => {
+                bytes.set(chunk, offset);
+                offset += chunk.length;
+            });
+        } else if (fileData.fileData) {
+            // Backward compatibility for small legacy files saved before Cloud Storage was added.
+            const binaryString = atob(fileData.fileData);
+            bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+        } else {
+            throw new Error("The encrypted file data is missing.");
         }
 
         // 3. Extract the IV (first 12 bytes) and the Content
