@@ -17,7 +17,7 @@
             <div class="auth-intro-copy">
                 <p class="eyebrow eyebrow-light">Private by design</p>
                 <h1>Start protecting the files that matter.</h1>
-                <p>Create your private vault in a few moments. Your files are encrypted before they are stored.</p>
+                <p>Create your private vault in a few moments. Your files are encrypted in the browser and the encrypted result is saved to Firestore.</p>
             </div>
             <div class="security-note">
                 <span class="note-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
@@ -49,11 +49,13 @@
                     <button id="signupButton" type="submit" class="btn btn-primary btn-full">Create account <span aria-hidden="true">→</span></button>
                 </form>
                 <div id="message" class="form-message" role="status" aria-live="polite"></div>
+                <p class="auth-note">Encrypted files are stored in Firestore as ciphertext. Your secret key stays with you only.</p>
                 <p class="auth-switch">Already have an account? <a href="auth.html">Sign in</a></p>
                 <p class="auth-footer">SecureVault keeps your files protected with end-to-end encryption.</p>
             </div>
         </section>
     </main>
+    <footer class="landing-footer"><div class="app-shell"><span>© 2026 SecureVault</span><div class="footer-links"><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="contact.html">Contact</a></div></div></footer>
 
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>

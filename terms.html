@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureVault — Terms</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="landing-page">
+    <header class="landing-header">
+        <div class="app-shell landing-nav">
+            <a class="brand" href="index.html" aria-label="SecureVault home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 2.9 8.7 7 10 4.1-1.3 7-5.5 7-10V6l-7-3Z"/><path d="M9.5 12 11 13.5l3.5-3.5"/></svg></span>SecureVault</a>
+            <div class="landing-actions"><a class="nav-login" href="auth.html">Sign in</a><a class="btn btn-primary nav-cta" href="signup.html">Create account</a></div>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero app-shell">
+            <div class="hero-copy">
+                <p class="eyebrow">Terms of Use</p>
+                <h1>Use SecureVault with confidence.</h1>
+                <p>SecureVault is a privacy-first storage experience that encrypts your files locally and saves only encrypted data to Firestore.</p>
+                <div class="hero-actions"><a class="btn btn-primary hero-cta" href="signup.html">Create account <span aria-hidden="true">→</span></a><a class="hero-text-link" href="privacy.html">Read privacy</a></div>
+            </div>
+            <div class="hero-visual" aria-label="Terms illustration"><div class="visual-glow"></div><div class="vault-window"><div class="window-bar"><span></span><span></span><span></span><p>Terms</p></div><div class="window-body"><div class="window-lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><strong>Encrypted only</strong><small>Browser first</small></div><span class="window-check">✓</span></div></div>
+        </section>
+
+        <section class="app-shell" style="padding:58px 0 80px;">
+            <div class="surface" style="padding:32px; border-radius:14px;">
+                <h2 style="margin-bottom:18px; font-size:1.6rem;">Key terms</h2>
+                <ul style="color:#51607a; font-size:.96rem; line-height:1.8; padding-left:20px;">
+                    <li>Files are encrypted in the browser before upload.</li>
+                    <li>Only encrypted ciphertext is stored in Firestore.</li>
+                    <li>SecureVault does not store or have access to your secret key.</li>
+                    <li>You are responsible for protecting your secret key. Lost keys cannot be recovered.</li>
+                </ul>
+                <p style="color:#51607a; font-size:.96rem; line-height:1.8;">By using SecureVault, you agree that the service is provided as-is and that data recovery is not possible without the correct secret key.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="landing-footer"><div class="app-shell"><span>© 2026 SecureVault</span><div class="footer-links"><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="contact.html">Contact</a></div></div></footer>
+</body>
+</html>
