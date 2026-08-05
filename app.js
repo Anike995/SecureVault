@@ -138,7 +138,9 @@ function bytesToBase64(bytes) {
 }
 
 async function deleteFileChunks(fileRef) {
-    const chunks = await fileRef.collection("chunks").get();
+    const chunks = await fileRef.collection("chunks")
+        .where("ownerID", "==", auth.currentUser.uid)
+        .get();
     let batch = db.batch();
     let operations = 0;
     const commits = [];
@@ -451,6 +453,7 @@ async function decryptAndDownload() {
         let bytes;
         if (fileData.chunkCount) {
             const chunksSnapshot = await doc.ref.collection("chunks")
+                .where("ownerID", "==", auth.currentUser.uid)
                 .orderBy(firebase.firestore.FieldPath.documentId())
                 .get();
             if (chunksSnapshot.size !== fileData.chunkCount) {
