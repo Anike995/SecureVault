@@ -77,6 +77,21 @@ function getFriendlyUploadError(error) {
     return "The file could not be encrypted and saved. Please try again.";
 }
 
+function getFriendlyFileActionError(error, action) {
+    const code = error?.code || "";
+    if (code === "permission-denied") {
+        return "Firestore security rules are blocking this action. Publish the updated rules for file chunks.";
+    }
+    if (error?.message?.includes("chunks are missing")) {
+        return "This encrypted file is incomplete and cannot be recovered.";
+    }
+    if (error?.message?.includes("data is missing")) {
+        return "This file uses an older storage format that is no longer available.";
+    }
+    if (action === "delete") return "The file could not be deleted. Please try again.";
+    return "Decryption failed. Check your secret key and try again.";
+}
+
 async function handlePasswordReset() {
     const email = document.getElementById("resetEmail").value.trim();
     const button = document.getElementById("resetButton");
@@ -211,7 +226,7 @@ async function deleteStoredFile() {
         showToast("The encrypted file has been removed from your vault.", "success");
     } catch (error) {
         console.error("[SecureVault] File deletion failed", error);
-        showToast("The file could not be deleted. Please try again.", "error");
+        showToast(getFriendlyFileActionError(error, "delete"), "error");
     } finally {
         setButtonLoading(button, false);
         setButtonLoading(confirmButton, false);
@@ -515,8 +530,8 @@ async function decryptAndDownload() {
         showToast("Your file has been decrypted and is downloading.", "success");
 
     } catch (error) {
-        console.error(error);
-        showToast("Decryption failed. Check your secret key and try again.", "error");
+        console.error("[SecureVault] Decryption failed", error);
+        showToast(getFriendlyFileActionError(error, "decrypt"), "error");
     } finally {
         setButtonLoading(button, false);
         setButtonLoading(confirmButton, false);
