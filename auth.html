@@ -35,7 +35,7 @@
                     <p>Enter your details to access your encrypted files.</p>
                 </div>
 
-                <form onsubmit="handleLogin(); return false;" novalidate>
+                <form id="loginForm" onsubmit="return false;" novalidate>
                     <div class="field-group">
                         <label for="email" class="form-label">Email address</label>
                         <input type="email" id="email" class="form-control" autocomplete="email" placeholder="you@example.com" required>
@@ -48,7 +48,7 @@
                         </div>
                         <a class="forgot-link" href="forgot-password.html">Forgot your password?</a>
                     </div>
-                    <button id="loginButton" type="submit" class="btn btn-primary btn-full">Sign in <span aria-hidden="true">→</span></button>
+                    <button id="loginButton" type="button" class="btn btn-primary btn-full" onclick="handleLogin()">Sign in <span aria-hidden="true">→</span></button>
                 </form>
                 <div id="message" class="form-message" role="status" aria-live="polite"></div>
                 <p class="auth-note">Encrypted files are stored in Firestore as ciphertext. SecureVault never saves your secret key.</p>
