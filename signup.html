@@ -33,7 +33,7 @@
                     <p>Use an email address and a strong password to get started.</p>
                 </div>
 
-                <form onsubmit="handleSignUp(); return false;" novalidate>
+                <form id="signupForm" onsubmit="return false;" novalidate>
                     <div class="field-group">
                         <label for="email" class="form-label">Email address</label>
                         <input type="email" id="email" class="form-control" autocomplete="email" placeholder="you@example.com" required>
@@ -46,7 +46,7 @@
                         </div>
                         <p class="field-hint">Choose at least 6 characters.</p>
                     </div>
-                    <button id="signupButton" type="submit" class="btn btn-primary btn-full">Create account <span aria-hidden="true">→</span></button>
+                    <button id="signupButton" type="button" class="btn btn-primary btn-full">Create account <span aria-hidden="true">→</span></button>
                 </form>
                 <div id="message" class="form-message" role="status" aria-live="polite"></div>
                 <p class="auth-note">Encrypted files are stored in Firestore as ciphertext. Your secret key stays with you only.</p>
