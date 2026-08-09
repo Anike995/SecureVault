@@ -139,12 +139,217 @@ function formatStoredAt(timestamp) {
     }).format(timestamp.toDate());
 }
 
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function bytesToBase64(bytes) {
     let binary = "";
     for (let i = 0; i < bytes.byteLength; i++) {
         binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+async function deriveKeyFromPassword(password) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
+        keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+    );
+}
+
+async function wrapKeyWithPassword(keyBytes, password) {
+    const wrappingKey = await deriveKeyFromPassword(password);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const wrappedBytes = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrappingKey, keyBytes);
+    return {
+        iv: bytesToBase64(iv),
+        data: bytesToBase64(new Uint8Array(wrappedBytes))
+    };
+}
+
+async function unwrapKeyWithPassword(wrappedKey, password) {
+    if (!wrappedKey?.iv || !wrappedKey?.data) throw new Error("Missing wrapped key data.");
+    const wrappingKey = await deriveKeyFromPassword(password);
+    const iv = base64ToBytes(wrappedKey.iv);
+    const data = base64ToBytes(wrappedKey.data);
+    const unwrappedBytes = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, wrappingKey, data);
+    return new Uint8Array(unwrappedBytes);
+}
+
+function getStoredFolders() {
+    try {
+        const raw = localStorage.getItem("secureVaultFolders");
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveStoredFolders(folders) {
+    localStorage.setItem("secureVaultFolders", JSON.stringify(folders));
+}
+
+function getUnlockedFolders() {
+    try {
+        const raw = localStorage.getItem("secureUnlockedFolders");
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveUnlockedFolders(folderNames) {
+    localStorage.setItem("secureUnlockedFolders", JSON.stringify(folderNames));
+}
+
+function lockFolder(folderName) {
+    if (!folderName) return;
+    unlockedFolders = unlockedFolders.filter((name) => name !== folderName);
+    saveUnlockedFolders(unlockedFolders);
+}
+
+function loadStoredFolders() {
+    const folderSelect = document.getElementById("folderSelect");
+    const folderManagementList = document.getElementById("folderManagementList");
+    const storedFolders = getStoredFolders();
+
+    if (folderSelect) {
+        folderSelect.innerHTML = '<option value="">No folder</option>';
+        storedFolders.forEach((folder) => {
+            const option = document.createElement("option");
+            option.value = folder.name;
+            option.textContent = folder.name;
+            folderSelect.appendChild(option);
+        });
+    }
+
+    if (folderManagementList) {
+        if (!storedFolders.length) {
+            folderManagementList.innerHTML = '<div class="empty-state"><p>No folders yet.</p></div>';
+            return;
+        }
+        folderManagementList.innerHTML = storedFolders.map((folder) => `
+            <div class="folder-item">
+                <strong>${escapeHtml(folder.name)}</strong>
+                <div class="folder-actions">
+                    <button class="btn btn-primary" type="button" onclick="openFolderUnlockDialog('${encodeURIComponent(folder.name)}')">Unlock</button>
+                    <button class="btn btn-warning" type="button" onclick="openFolderResetDialog('${encodeURIComponent(folder.name)}')" ${folder.recoveryPassword ? "" : "disabled title='No folder recovery key configured'"}>Reset</button>
+                    <button class="btn btn-delete" type="button" onclick="deleteFolder('${encodeURIComponent(folder.name)}')">Delete</button>
+                </div>
+            </div>
+        `).join("");
+    }
+}
+
+async function deleteFolder(encodedFolderName) {
+    const folderName = decodeURIComponent(encodedFolderName);
+    if (!folderName) {
+        showToast("Folder not found.", "error");
+        return;
+    }
+
+    if (!confirm(`Delete folder "${folderName}" and ALL files inside it? This will permanently remove the folder and every file it contains from your vault. This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        // Permanently delete all files (and their encrypted chunks) that belong to this folder.
+        const user = auth.currentUser;
+        if (user) {
+            const snapshot = await db.collection("files")
+                .where("ownerID", "==", user.uid)
+                .where("folderName", "==", folderName)
+                .get();
+
+            let batch = db.batch();
+            let operations = 0;
+            const commits = [];
+
+            for (const doc of snapshot.docs) {
+                const fileRef = db.collection("files").doc(doc.id);
+                await deleteFileChunks(fileRef);
+                batch.delete(fileRef);
+                operations += 1;
+                if (operations === 450) {
+                    commits.push(batch.commit());
+                    batch = db.batch();
+                    operations = 0;
+                }
+            }
+            if (operations > 0) commits.push(batch.commit());
+            await Promise.all(commits);
+        }
+    } catch (error) {
+        console.error("[SecureVault] Folder deletion failed", error);
+        showToast("The folder could not be deleted. Please try again.", "error");
+        return;
+    }
+
+    const storedFolders = getStoredFolders();
+    const remaining = storedFolders.filter((item) => item.name !== folderName);
+    saveStoredFolders(remaining);
+    lockFolder(folderName);
+    if (activeFolderView === folderName) {
+        activeFolderView = null;
+    }
+
+    loadStoredFolders();
+    refreshVault();
+    showToast(`Folder "${folderName}" and all files inside it were permanently removed from your vault.`, "success");
+}
+
+function createFolder() {
+    const folderName = document.getElementById("folderName")?.value?.trim();
+    const folderPassword = document.getElementById("folderPasswordCreate")?.value?.trim();
+    const folderRecoveryPassword = document.getElementById("folderRecoveryPassword")?.value?.trim();
+    if (!folderName || !folderPassword) {
+        showToast("Enter both a folder name and folder password.", "error");
+        return;
+    }
+
+    const folders = getStoredFolders();
+    const existing = folders.find((folder) => folder.name === folderName);
+    if (existing) {
+        if (existing.password !== btoa(folderPassword)) {
+            showToast("A folder with that name already exists. Use a different name.", "error");
+            return;
+        }
+        showToast("Folder already exists. Select it when uploading a file.", "success");
+    } else {
+        const folderData = {
+            name: folderName,
+            password: btoa(folderPassword)
+        };
+        if (folderRecoveryPassword) {
+            folderData.recoveryPassword = btoa(folderRecoveryPassword);
+        }
+        folders.push(folderData);
+        saveStoredFolders(folders);
+        showToast("Folder is ready. Select it when uploading a file.", "success");
+    }
+
+    document.getElementById("folderName").value = "";
+    document.getElementById("folderPasswordCreate").value = "";
+    loadStoredFolders();
 }
 
 async function deleteFileChunks(fileRef) {
@@ -170,6 +375,290 @@ async function deleteFileChunks(fileRef) {
 
 let pendingDecryption = null;
 let pendingDeletion = null;
+let pendingUnlockFolder = null;
+let pendingResetFolder = null;
+let pendingResetFile = null;
+let unlockedFolders = [];
+let activeFolderView = null;
+let vaultUnsubscribe = null;
+
+function refreshVault() {
+    if (vaultUnsubscribe) {
+        vaultUnsubscribe();
+        vaultUnsubscribe = null;
+    }
+    loadVault();
+}
+
+function openFolderUnlockDialog(encodedFolderName) {
+    pendingUnlockFolder = encodedFolderName;
+    const folderName = decodeURIComponent(encodedFolderName);
+    const modal = document.getElementById("folderUnlockModal");
+    const folderTitle = document.getElementById("folderUnlockName");
+    const passwordInput = document.getElementById("folderUnlockPassword");
+    if (!modal || !folderTitle || !passwordInput) return;
+
+    folderTitle.textContent = folderName;
+    passwordInput.value = "";
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => passwordInput.focus(), 50);
+}
+
+function closeFolderUnlockDialog() {
+    const modal = document.getElementById("folderUnlockModal");
+    if (!modal) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    pendingUnlockFolder = null;
+}
+
+function clearFolderView() {
+    activeFolderView = null;
+    refreshVault();
+}
+
+function openFolderView(encodedFolderName) {
+    activeFolderView = decodeURIComponent(encodedFolderName);
+    refreshVault();
+}
+
+async function submitFolderUnlock() {
+    const passwordInput = document.getElementById("folderUnlockPassword");
+    const password = passwordInput?.value?.trim() || "";
+    if (!pendingUnlockFolder) return;
+    if (!password) {
+        showToast("Enter the folder password to unlock it.", "error");
+        return;
+    }
+
+    const folderName = decodeURIComponent(pendingUnlockFolder);
+    const storedFolder = getStoredFolders().find((folder) => folder.name === folderName);
+    const encodedEntry = btoa(password);
+    let passwordMatches = false;
+    let recoveryMatches = false;
+
+    if (storedFolder) {
+        passwordMatches = storedFolder.password === encodedEntry;
+        recoveryMatches = storedFolder.recoveryPassword && storedFolder.recoveryPassword === encodedEntry;
+    }
+
+    if (!passwordMatches && !recoveryMatches) {
+        const querySnapshot = await db.collection("files")
+            .where("ownerID", "==", auth.currentUser.uid)
+            .where("folderName", "==", folderName)
+            .limit(1)
+            .get();
+        querySnapshot.forEach((doc) => {
+            const file = doc.data();
+            if (file.folderPassword === encodedEntry) {
+                passwordMatches = true;
+            }
+        });
+    }
+
+    if (!passwordMatches && !recoveryMatches) {
+        showToast("Folder password is incorrect.", "error");
+        return;
+    }
+
+    if (!unlockedFolders.includes(folderName)) {
+        unlockedFolders.push(folderName);
+        saveUnlockedFolders(unlockedFolders);
+    }
+
+    activeFolderView = folderName;
+    showToast(`Folder "${folderName}" is unlocked${recoveryMatches ? " with recovery key" : ""}.`, "success");
+    closeFolderUnlockDialog();
+    loadStoredFolders();
+    refreshVault();
+}
+
+function openFolderResetDialog(encodedFolderName) {
+    pendingResetFolder = encodedFolderName;
+    const folderName = decodeURIComponent(encodedFolderName);
+    const modal = document.getElementById("folderResetModal");
+    const folderTitle = document.getElementById("folderResetName");
+    const recoveryInput = document.getElementById("folderResetRecoveryPassword");
+    const newPasswordInput = document.getElementById("folderResetNewPassword");
+    const confirmPasswordInput = document.getElementById("folderResetConfirmPassword");
+    if (!modal || !folderTitle || !recoveryInput || !newPasswordInput || !confirmPasswordInput) return;
+
+    folderTitle.textContent = folderName;
+    recoveryInput.value = "";
+    newPasswordInput.value = "";
+    confirmPasswordInput.value = "";
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => recoveryInput.focus(), 50);
+}
+
+function closeFolderResetDialog() {
+    const modal = document.getElementById("folderResetModal");
+    if (!modal) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    pendingResetFolder = null;
+}
+
+async function submitFolderReset() {
+    const recoveryInput = document.getElementById("folderResetRecoveryPassword");
+    const newPasswordInput = document.getElementById("folderResetNewPassword");
+    const confirmPasswordInput = document.getElementById("folderResetConfirmPassword");
+    const recoveryPassword = recoveryInput?.value?.trim() || "";
+    const newPassword = newPasswordInput?.value?.trim() || "";
+    const confirmPassword = confirmPasswordInput?.value?.trim() || "";
+
+    if (!pendingResetFolder) return;
+    if (!recoveryPassword || !newPassword || !confirmPassword) {
+        showToast("Fill in all fields to reset the folder password.", "error");
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        showToast("The new passwords do not match.", "error");
+        return;
+    }
+
+    const folderName = decodeURIComponent(pendingResetFolder);
+    const folders = getStoredFolders();
+    const storedFolder = folders.find((folder) => folder.name === folderName);
+    if (!storedFolder || !storedFolder.recoveryPassword) {
+        showToast("Folder recovery information is unavailable.", "error");
+        return;
+    }
+
+    if (storedFolder.recoveryPassword !== btoa(recoveryPassword)) {
+        showToast("Folder recovery key is incorrect.", "error");
+        return;
+    }
+
+    storedFolder.password = btoa(newPassword);
+    saveStoredFolders(folders);
+    if (!unlockedFolders.includes(folderName)) {
+        unlockedFolders.push(folderName);
+        saveUnlockedFolders(unlockedFolders);
+    }
+
+    try {
+        const snapshot = await db.collection("files")
+            .where("ownerID", "==", auth.currentUser.uid)
+            .where("folderName", "==", folderName)
+            .get();
+
+        let batch = db.batch();
+        let operations = 0;
+        const commits = [];
+
+        snapshot.forEach((doc) => {
+            const file = doc.data();
+            if (file.folderPassword) {
+                batch.update(doc.ref, { folderPassword: btoa(newPassword) });
+                operations += 1;
+                if (operations === 450) {
+                    commits.push(batch.commit());
+                    batch = db.batch();
+                    operations = 0;
+                }
+            }
+        });
+
+        if (operations > 0) commits.push(batch.commit());
+        await Promise.all(commits);
+    } catch (error) {
+        console.error("[SecureVault] Folder reset update failed", error);
+        showToast("Folder password was reset locally, but files could not be updated.", "warning");
+        closeFolderResetDialog();
+        loadStoredFolders();
+        refreshVault();
+        return;
+    }
+
+    closeFolderResetDialog();
+    loadStoredFolders();
+    refreshVault();
+    showToast(`Folder "${folderName}" password has been reset.`, "success");
+}
+
+function openFileResetDialog(docId) {
+    pendingResetFile = docId;
+    const modal = document.getElementById("fileResetModal");
+    const recoveryInput = document.getElementById("fileResetRecoveryPassword");
+    const newPasswordInput = document.getElementById("fileResetNewPassword");
+    const confirmPasswordInput = document.getElementById("fileResetConfirmPassword");
+    const newRecoveryInput = document.getElementById("fileResetNewRecoveryPassword");
+    if (!modal || !recoveryInput || !newPasswordInput || !confirmPasswordInput || !newRecoveryInput) return;
+
+    recoveryInput.value = "";
+    newPasswordInput.value = "";
+    confirmPasswordInput.value = "";
+    newRecoveryInput.value = "";
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => recoveryInput.focus(), 50);
+}
+
+function closeFileResetDialog() {
+    const modal = document.getElementById("fileResetModal");
+    if (!modal) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    pendingResetFile = null;
+}
+
+async function submitFileReset() {
+    const recoveryInput = document.getElementById("fileResetRecoveryPassword");
+    const newPasswordInput = document.getElementById("fileResetNewPassword");
+    const confirmPasswordInput = document.getElementById("fileResetConfirmPassword");
+    const newRecoveryInput = document.getElementById("fileResetNewRecoveryPassword");
+    const recoveryPassword = recoveryInput?.value?.trim() || "";
+    const newPassword = newPasswordInput?.value?.trim() || "";
+    const confirmPassword = confirmPasswordInput?.value?.trim() || "";
+    const newRecoveryPassword = newRecoveryInput?.value?.trim() || "";
+
+    if (!pendingResetFile) return;
+    if (!recoveryPassword || !newPassword || !confirmPassword) {
+        showToast("Fill in all required fields to reset the file secret key.", "error");
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        showToast("The new secret keys do not match.", "error");
+        return;
+    }
+
+    try {
+        const docRef = db.collection("files").doc(pendingResetFile);
+        const fileDoc = await docRef.get();
+        if (!fileDoc.exists) throw new Error("File not found.");
+        const fileData = fileDoc.data();
+
+        if (fileData.folderName && fileData.folderPassword) {
+            const storedFolder = getStoredFolders().find((folder) => folder.name === fileData.folderName);
+            const folderAccess = unlockedFolders.includes(fileData.folderName)
+                || (storedFolder && storedFolder.password === fileData.folderPassword);
+            if (!folderAccess) {
+                throw new Error("You must unlock the containing folder before resetting this file.");
+            }
+        }
+
+        if (!fileData.wrappedRecoveryKey) {
+            throw new Error("This file does not have a recovery key configured.");
+        }
+
+        const fileKey = await unwrapKeyWithPassword(fileData.wrappedRecoveryKey, recoveryPassword);
+        const newWrappedFileKey = await wrapKeyWithPassword(fileKey, newPassword);
+        const updatePayload = { wrappedFileKey: newWrappedFileKey };
+        if (newRecoveryPassword) {
+            updatePayload.wrappedRecoveryKey = await wrapKeyWithPassword(fileKey, newRecoveryPassword);
+        }
+
+        await docRef.update(updatePayload);
+        closeFileResetDialog();
+        showToast("File secret key has been reset successfully.", "success");
+    } catch (error) {
+        console.error("[SecureVault] File reset failed", error);
+        showToast(error.message || "Could not reset the file secret key.", "error");
+    }
+}
 
 function showToast(message, type = "info") {
     const container = document.getElementById("toastContainer");
@@ -311,6 +800,9 @@ document.addEventListener("DOMContentLoaded", () => {
 async function encryptAndUpload() {
     const fileInput = document.getElementById('fileInput');
     const password = document.getElementById('encryptionPassword').value;
+    const recoveryPassword = document.getElementById('recoveryPassword')?.value?.trim() || "";
+    const folderName = document.getElementById('folderSelect')?.value || "";
+    let folderPassword = document.getElementById('folderPassword')?.value?.trim() || "";
     const status = document.getElementById('uploadStatus');
     const uploadButton = document.getElementById('uploadButton');
     let fileRef = null;
@@ -337,20 +829,17 @@ async function encryptAndUpload() {
         const fileData = await file.arrayBuffer();
         const enc = new TextEncoder();
 
-        // 2. Generate Key
-        const keyMaterial = await crypto.subtle.importKey(
-            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
-        );
-        const key = await crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
-            keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt"]
+        // 2. Generate a random content key and wrap it with the main and optional recovery password.
+        const fileKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+        const contentKey = await crypto.subtle.importKey(
+            "raw", fileKeyBytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
         );
         console.info("[SecureVault] PBKDF2 key derivation complete", { iterations: 100000, hash: "SHA-256" });
 
-        // 3. Encrypt
+        // 3. Encrypt the file content with the random file key.
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const encryptedContent = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: iv }, key, fileData
+            { name: "AES-GCM", iv: iv }, contentKey, fileData
         );
         console.info("[SecureVault] AES-GCM encryption successful", { ivBytes: iv.length });
         status.textContent = "Saving encrypted file securely…";
@@ -371,12 +860,40 @@ async function encryptAndUpload() {
                 ownerID: auth.currentUser.uid
             });
         }
-        await fileRef.set({
+
+        if (folderName && !folderPassword) {
+            const storedFolder = getStoredFolders().find((folder) => folder.name === folderName);
+            if (storedFolder) {
+                folderPassword = atob(storedFolder.password);
+            }
+        }
+
+        if (!folderName) {
+            folderPassword = "";
+        }
+
+        const wrappedMainKey = await wrapKeyWithPassword(fileKeyBytes, password);
+        const metadata = {
             ownerID: auth.currentUser.uid,
             fileName: file.name,
             chunkCount: chunkCount,
+            cipherVersion: 2,
+            wrappedFileKey: wrappedMainKey,
             uploadedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        };
+
+        if (folderName) {
+            metadata.folderName = folderName;
+            if (folderPassword) {
+                metadata.folderPassword = btoa(folderPassword);
+            }
+        }
+
+        if (recoveryPassword) {
+            metadata.wrappedRecoveryKey = await wrapKeyWithPassword(fileKeyBytes, recoveryPassword);
+        }
+
+        await fileRef.set(metadata);
         metadataSaved = true;
         console.info("[SecureVault] Cloud sync complete", { fileName: file.name });
 
@@ -384,6 +901,8 @@ async function encryptAndUpload() {
         showToast("Your file has been encrypted and saved to the vault.", "success");
         fileInput.value = "";
         document.getElementById('encryptionPassword').value = "";
+        document.getElementById('recoveryPassword').value = "";
+        document.getElementById('folderPassword').value = "";
         
     } catch (error) {
         console.error(error);
@@ -404,33 +923,120 @@ async function encryptAndUpload() {
 }
 
 // --- VAULT LOADING LOGIC ---
+function isLockedFolder(folderName, storedFolder, files) {
+    if (folderName === "No folder") return false;
+    const hasFolderProtection = !!(storedFolder?.password || files.some(({ file }) => !!file.folderPassword));
+    if (!hasFolderProtection) return false;
+    if (!storedFolder?.password) return true;
+    return !unlockedFolders.includes(folderName);
+}
+
 function loadVault() {
     const user = auth.currentUser;
     const fileContainer = document.getElementById('fileContainer');
     if (!user || !fileContainer) return;
 
-    db.collection("files").where("ownerID", "==", user.uid)
+    if (vaultUnsubscribe) {
+        vaultUnsubscribe();
+        vaultUnsubscribe = null;
+    }
+
+    vaultUnsubscribe = db.collection("files").where("ownerID", "==", user.uid)
       .onSnapshot((snapshot) => {
-          if (snapshot.empty) {
+          const groupedFiles = {};
+
+          snapshot.forEach((doc) => {
+              const file = doc.data();
+              const folderName = file.folderName || "No folder";
+              if (!groupedFiles[folderName]) groupedFiles[folderName] = [];
+              groupedFiles[folderName].push({ doc, file });
+          });
+
+          const orderedGroups = Object.entries(groupedFiles).sort(([a], [b]) => {
+              if (a === "No folder") return 1;
+              if (b === "No folder") return -1;
+              return a.localeCompare(b);
+          });
+
+          if (!orderedGroups.length) {
               fileContainer.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z"/></svg></span><h3>Your vault is empty</h3><p>Encrypted files you save will appear here.</p></div>';
               return;
           }
-          fileContainer.innerHTML = "";
-          snapshot.forEach((doc) => {
-              const file = doc.data();
-              fileContainer.innerHTML += `
-                  <div class="list-group-item d-flex justify-content-between align-items-center file-item shadow-sm mb-2">
-                      <div>
-                          <h6 class="mb-0 text-primary">${file.fileName}</h6>
-                          <small class="text-muted">Encrypted and saved ${formatStoredAt(file.uploadedAt)}</small>
+
+          const activeView = activeFolderView;
+          if (activeView) {
+              const activeGroup = orderedGroups.find(([folderName]) => folderName === activeView);
+              if (!activeGroup) {
+                  fileContainer.innerHTML = '<div class="empty-state"><h3>Folder unavailable</h3><p>The selected folder could not be found.</p></div>';
+                  return;
+              }
+              const [folderName, files] = activeGroup;
+              const storedFolder = getStoredFolders().find((folder) => folder.name === folderName);
+              const locked = isLockedFolder(folderName, storedFolder, files);
+              if (locked) {
+                  fileContainer.innerHTML = '<div class="empty-state"><h3>Folder locked</h3><p>This folder is still locked. Enter its password or recovery key again to continue.</p></div>';
+                  return;
+              }
+              fileContainer.innerHTML = `
+                  <div class="folder-view-banner mb-4">
+                      <div class="folder-view-title">Viewing folder: ${escapeHtml(folderName)}</div>
+                      <div class="folder-view-actions">
+                          <button type="button" class="btn btn-quiet" onclick="clearFolderView()">Back to full vault</button>
+                          ${storedFolder?.recoveryPassword ? `<button type="button" class="btn btn-warning" onclick="openFolderResetDialog('${encodeURIComponent(folderName)}')">Reset password</button>` : ""}
+                          <button type="button" class="btn btn-delete" onclick="deleteFolder('${encodeURIComponent(folderName)}')">Delete folder</button>
                       </div>
-                      <div class="file-actions">
-                          <button onclick="openDecryptDialog('${doc.id}', this)" class="btn btn-sm btn-success">Decrypt & Download</button>
-                          <button onclick="openDeleteDialog('${doc.id}', this)" class="btn btn-sm btn-delete">Delete</button>
+                  </div>
+                  <div class="folder-group">
+                      <div class="folder-group-header">${escapeHtml(folderName)} <span class="folder-badge">${files.length} file${files.length === 1 ? "" : "s"}</span></div>
+                      <div class="folder-group-files">
+                          ${files.map(({ doc, file }) => `
+                              <div class="list-group-item d-flex justify-content-between align-items-center file-item shadow-sm mb-2">
+                                  <div>
+                                      <h6 class="mb-0 text-primary">${escapeHtml(file.fileName)}</h6>
+                                      <small class="text-muted">Encrypted and saved ${formatStoredAt(file.uploadedAt)}</small>
+                                      ${file.wrappedRecoveryKey ? '<small class="text-muted d-block">Recovery key available for this file.</small>' : ''}
+                                  </div>
+                                  <div class="file-actions">
+                                      <button onclick="openDecryptDialog('${doc.id}', this)" class="btn btn-sm btn-success">Decrypt & Download</button>
+                                      ${file.wrappedRecoveryKey ? `<button onclick="openFileResetDialog('${doc.id}')" class="btn btn-sm btn-warning">Reset key</button>` : ``}
+                                      <button onclick="openDeleteDialog('${doc.id}', this)" class="btn btn-sm btn-delete">Delete</button>
+                                  </div>
+                              </div>
+                          `).join("")}
                       </div>
                   </div>
               `;
-          });
+              return;
+          }
+
+fileContainer.innerHTML = orderedGroups.map(([folderName, files]) => {
+              const storedFolder = folderName !== "No folder" ? getStoredFolders().find((folder) => folder.name === folderName) : null;
+              const isLocked = isLockedFolder(folderName, storedFolder, files);
+              const deleteButton = folderName !== "No folder"
+                  ? `<button class="btn btn-sm btn-delete" type="button" onclick="deleteFolder('${encodeURIComponent(folderName)}')">Delete folder</button>`
+                  : "";
+              return `
+              <div class="folder-group">
+                  <div class="folder-group-header">
+                      <span>${escapeHtml(folderName)}${folderName !== "No folder" ? ` <span class="folder-badge">${files.length} file${files.length === 1 ? "" : "s"}</span>` : ""}</span>
+                      ${deleteButton}
+                  </div>
+                  ${isLocked ? `
+                      <div class="folder-locked">
+                          <p>Folder is locked. Enter the folder password to view files.</p>
+                          <button class="btn btn-sm btn-primary" type="button" onclick="openFolderUnlockDialog('${encodeURIComponent(folderName)}')">Unlock folder</button>
+                          ${storedFolder?.recoveryPassword ? `<button class="btn btn-sm btn-warning" type="button" onclick="openFolderResetDialog('${encodeURIComponent(folderName)}')">Reset password</button>` : ""}
+                      </div>
+                  ` : `
+                      <div class="folder-locked">
+                          <p>Folder is unlocked. Open it to view files.</p>
+                          <button class="btn btn-sm btn-primary" type="button" onclick="openFolderView('${encodeURIComponent(folderName)}')">Open folder</button>
+                          ${storedFolder?.recoveryPassword ? `<button class="btn btn-sm btn-warning" type="button" onclick="openFolderResetDialog('${encodeURIComponent(folderName)}')">Reset password</button>` : ""}
+                      </div>
+                  `}
+              </div>
+          `;
+          }).join("");
       }, (error) => {
           console.error(error);
           fileContainer.innerHTML = '<div class="empty-state"><h3>We could not load your vault</h3><p>Please refresh the page and try again.</p></div>';
@@ -442,7 +1048,9 @@ auth.onAuthStateChanged((user) => {
     const isDashboard = window.location.pathname.includes("dashboard.html");
     if (user) {
         if (isDashboard) {
+            unlockedFolders = getUnlockedFolders();
             document.getElementById('userEmail').innerText = user.email;
+            loadStoredFolders();
             loadVault();
         }
     } else if (isDashboard) {
@@ -459,6 +1067,8 @@ async function decryptAndDownload() {
     const { docId, button } = pendingDecryption;
     const confirmButton = document.getElementById("decryptConfirmButton");
     const cancelButton = document.getElementById("cancelDecryptButton");
+    const folderPasswordInput = document.getElementById("decryptFolderPassword");
+    const folderPassword = folderPasswordInput?.value?.trim() || "";
     setButtonLoading(button, true, "Decrypting");
     setButtonLoading(confirmButton, true, "Decrypting");
     cancelButton.disabled = true;
@@ -470,6 +1080,21 @@ async function decryptAndDownload() {
         
         const fileData = doc.data();
         const fileName = fileData.fileName;
+
+        // 1. If the file belongs to a folder with a password, verify folder access.
+        if (fileData.folderName && fileData.folderPassword) {
+            const folderPasswordInput = document.getElementById("decryptFolderPassword");
+            let folderPassword = folderPasswordInput?.value?.trim() || "";
+            if (!folderPassword) {
+                const storedFolder = getStoredFolders().find((folder) => folder.name === fileData.folderName);
+                if (storedFolder) {
+                    folderPassword = atob(storedFolder.password);
+                }
+            }
+            if (fileData.folderPassword !== btoa(folderPassword)) {
+                throw new Error("Folder password is incorrect.");
+            }
+        }
 
         // 2. Reassemble encrypted bytes from Firestore chunks.
         let bytes;
@@ -511,21 +1136,51 @@ async function decryptAndDownload() {
         const iv = bytes.slice(0, 12);
         const encryptedContent = bytes.slice(12);
 
-        // 4. Regenerate the Key using the password provided
-        const enc = new TextEncoder();
-        const keyMaterial = await crypto.subtle.importKey(
-            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
-        );
-        const key = await crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
-            keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
-        );
+        let fileKey = null;
+        if (fileData.folderPassword) {
+            const folderPasswordMatches = fileData.folderPassword === btoa(folderPassword);
+            if (!folderPasswordMatches) {
+                throw new Error("Folder password is incorrect.");
+            }
+        }
+
+        if (fileData.cipherVersion === 2) {
+            try {
+                fileKey = await unwrapKeyWithPassword(fileData.wrappedFileKey, password);
+            } catch (mainKeyError) {
+                if (fileData.wrappedRecoveryKey) {
+                    try {
+                        fileKey = await unwrapKeyWithPassword(fileData.wrappedRecoveryKey, password);
+                    } catch (recoveryKeyError) {
+                        throw new Error("Wrong secret key or recovery key.");
+                    }
+                } else {
+                    throw new Error("Wrong secret key.");
+                }
+            }
+        } else {
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+            );
+            fileKey = await crypto.subtle.deriveKey(
+                { name: "PBKDF2", salt: enc.encode("secure-salt"), iterations: 100000, hash: "SHA-256" },
+                keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+            );
+        }
+
+        const contentKey = fileKey instanceof Uint8Array
+            ? await crypto.subtle.importKey(
+                "raw", fileKey,
+                { name: "AES-GCM" }, false, ["decrypt"]
+            )
+            : fileKey;
 
         // Report-only integrity check: this changes a local copy, never the Firestore file.
         const tamperedContent = encryptedContent.slice();
         tamperedContent[0] ^= 1;
         try {
-            await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, tamperedContent);
+            await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, contentKey, tamperedContent);
             console.error("[SecureVault] Tamper-detection test: UNEXPECTED SUCCESS — modified ciphertext was accepted.");
         } catch (tamperError) {
             console.warn("[SecureVault] Tamper-detection test: FAILED — modified ciphertext rejected as expected.");
@@ -533,7 +1188,7 @@ async function decryptAndDownload() {
 
         // 5. Decrypt the data
         const decryptedContent = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv }, key, encryptedContent
+            { name: "AES-GCM", iv: iv }, contentKey, encryptedContent
         );
 
         // 6. Create a download link and click it automatically
@@ -551,8 +1206,16 @@ async function decryptAndDownload() {
 
         document.getElementById("decryptModal").classList.remove("is-open");
         document.getElementById("decryptModal").setAttribute("aria-hidden", "true");
+        if (fileData.folderName) {
+            lockFolder(fileData.folderName);
+            if (activeFolderView === fileData.folderName) {
+                activeFolderView = null;
+            }
+            loadStoredFolders();
+        }
         pendingDecryption = null;
         showToast("Your file has been decrypted and is downloading.", "success");
+        refreshVault();
 
     } catch (error) {
         console.error("[SecureVault] Decryption failed", error);
@@ -563,3 +1226,4 @@ async function decryptAndDownload() {
         cancelButton.disabled = false;
     }
 }
+
