@@ -13,6 +13,9 @@ const firebaseConfig = {
 let auth = null;
 let db = null;
 const FIRESTORE_CHUNK_SIZE = 700 * 1024;
+let uploadQueue = [];
+let uploadQueueIndex = 0;
+let uploadedDirectoryName = "";
 
 console.log("app.js loaded");
 
@@ -325,7 +328,6 @@ function createFolder() {
         showToast("Enter both a folder name and folder password.", "error");
         return;
     }
-
     const folders = getStoredFolders();
     const existing = folders.find((folder) => folder.name === folderName);
     if (existing) {
@@ -349,6 +351,7 @@ function createFolder() {
 
     document.getElementById("folderName").value = "";
     document.getElementById("folderPasswordCreate").value = "";
+    document.getElementById("folderRecoveryPassword").value = "";
     loadStoredFolders();
 }
 
@@ -482,12 +485,19 @@ function openFolderResetDialog(encodedFolderName) {
     const recoveryInput = document.getElementById("folderResetRecoveryPassword");
     const newPasswordInput = document.getElementById("folderResetNewPassword");
     const confirmPasswordInput = document.getElementById("folderResetConfirmPassword");
+    const recoveredPasswordSection = document.getElementById("recoveredFolderPasswordSection");
+    const recoveredPasswordInput = document.getElementById("recoveredFolderPassword");
     if (!modal || !folderTitle || !recoveryInput || !newPasswordInput || !confirmPasswordInput) return;
 
     folderTitle.textContent = folderName;
     recoveryInput.value = "";
     newPasswordInput.value = "";
     confirmPasswordInput.value = "";
+    if (recoveredPasswordSection) recoveredPasswordSection.hidden = true;
+    if (recoveredPasswordInput) {
+        recoveredPasswordInput.value = "";
+        recoveredPasswordInput.type = "password";
+    }
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
     window.setTimeout(() => recoveryInput.focus(), 50);
@@ -499,6 +509,53 @@ function closeFolderResetDialog() {
     modal.classList.remove("is-open");
     modal.setAttribute("aria-hidden", "true");
     pendingResetFolder = null;
+}
+
+async function saveEncryptedChunks(fileRef, combined) {
+    const chunkCount = Math.ceil(combined.byteLength / FIRESTORE_CHUNK_SIZE);
+    const concurrency = 4;
+    for (let startIndex = 0; startIndex < chunkCount; startIndex += concurrency) {
+        const writes = [];
+        for (let index = startIndex; index < Math.min(startIndex + concurrency, chunkCount); index++) {
+            const chunk = combined.slice(index * FIRESTORE_CHUNK_SIZE, (index + 1) * FIRESTORE_CHUNK_SIZE);
+            writes.push(fileRef.collection("chunks").doc(String(index).padStart(6, "0")).set({
+                data: bytesToBase64(chunk),
+                ownerID: auth.currentUser.uid
+            }));
+        }
+        await Promise.all(writes);
+    }
+    return chunkCount;
+}
+
+function revealFolderPassword() {
+    const recoveryPassword = document.getElementById("folderResetRecoveryPassword")?.value?.trim() || "";
+    const recoveredPasswordSection = document.getElementById("recoveredFolderPasswordSection");
+    const recoveredPasswordInput = document.getElementById("recoveredFolderPassword");
+    if (!pendingResetFolder || !recoveryPassword) {
+        showToast("Enter the folder recovery key first.", "error");
+        return;
+    }
+
+    const folderName = decodeURIComponent(pendingResetFolder);
+    const storedFolder = getStoredFolders().find((folder) => folder.name === folderName);
+    if (!storedFolder?.password || !storedFolder.recoveryPassword) {
+        showToast("Folder recovery information is unavailable.", "error");
+        return;
+    }
+    if (storedFolder.recoveryPassword !== btoa(recoveryPassword)) {
+        showToast("Folder recovery key is incorrect.", "error");
+        return;
+    }
+
+    try {
+        recoveredPasswordInput.value = atob(storedFolder.password);
+        recoveredPasswordSection.hidden = false;
+        showToast("Your current folder password has been revealed.", "success");
+    } catch (error) {
+        console.error("[SecureVault] Folder password recovery failed", error);
+        showToast("The folder password could not be revealed.", "error");
+    }
 }
 
 async function submitFolderReset() {
@@ -586,15 +643,218 @@ function openFileResetDialog(docId) {
     const newPasswordInput = document.getElementById("fileResetNewPassword");
     const confirmPasswordInput = document.getElementById("fileResetConfirmPassword");
     const newRecoveryInput = document.getElementById("fileResetNewRecoveryPassword");
+    const recoveredSecretSection = document.getElementById("recoveredSecretSection");
+    const recoveredSecretInput = document.getElementById("recoveredSecretKey");
+    const legacyNotice = document.getElementById("legacyRecoveryNotice");
+    const revealButton = document.getElementById("revealFileKeyButton");
     if (!modal || !recoveryInput || !newPasswordInput || !confirmPasswordInput || !newRecoveryInput) return;
 
     recoveryInput.value = "";
     newPasswordInput.value = "";
     confirmPasswordInput.value = "";
     newRecoveryInput.value = "";
+    if (recoveredSecretSection) recoveredSecretSection.hidden = true;
+    if (recoveredSecretInput) {
+        recoveredSecretInput.value = "";
+        recoveredSecretInput.type = "password";
+    }
+    if (legacyNotice) legacyNotice.hidden = true;
+    if (revealButton) revealButton.hidden = false;
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
+    db.collection("files").doc(docId).get().then((fileDoc) => {
+        if (!fileDoc.exists) return;
+        const isLegacyRecovery = !fileDoc.data().wrappedOriginalSecret;
+        if (legacyNotice) {
+            legacyNotice.hidden = !isLegacyRecovery;
+            if (isLegacyRecovery) {
+                legacyNotice.textContent = "This older file does not contain a recoverable copy of its original secret key. Use your recovery key to set a new secret key below; that replacement key will be recoverable in future.";
+            }
+        }
+        if (revealButton) revealButton.hidden = isLegacyRecovery;
+    }).catch((error) => console.warn("[SecureVault] Could not check legacy recovery status", error));
     window.setTimeout(() => recoveryInput.focus(), 50);
+}
+
+function generateStrongKey(length = 32) {
+    const characterSets = [
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "0123456789",
+        "!@#$%^&*-_=+"
+    ];
+    const characters = characterSets.join("");
+    const randomIndex = (limit) => {
+        const maxUnbiasedValue = Math.floor(0x100000000 / limit) * limit;
+        const randomValue = new Uint32Array(1);
+        do {
+            crypto.getRandomValues(randomValue);
+        } while (randomValue[0] >= maxUnbiasedValue);
+        return randomValue[0] % limit;
+    };
+
+    const keyCharacters = characterSets.map((set) => set[randomIndex(set.length)]);
+    while (keyCharacters.length < length) {
+        keyCharacters.push(characters[randomIndex(characters.length)]);
+    }
+
+    for (let index = keyCharacters.length - 1; index > 0; index -= 1) {
+        const swapIndex = randomIndex(index + 1);
+        [keyCharacters[index], keyCharacters[swapIndex]] = [keyCharacters[swapIndex], keyCharacters[index]];
+    }
+    return keyCharacters.join("");
+}
+
+function hasSelectedUploadFile() {
+    return (document.getElementById("fileInput")?.files?.length || 0) > 0
+        || (document.getElementById("folderInput")?.files?.length || 0) > 0;
+}
+
+function formatFileSize(bytes) {
+    if (!bytes) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    return `${(bytes / (1024 ** unitIndex)).toFixed(unitIndex ? 1 : 0)} ${units[unitIndex]}`;
+}
+
+function updateFolderUploadSummary() {
+    const folderInput = document.getElementById("folderInput");
+    const summary = document.getElementById("folderUploadSummary");
+    if (!folderInput || !summary) return;
+    const files = [...folderInput.files];
+    if (!files.length) {
+        summary.hidden = true;
+        summary.textContent = "";
+        return;
+    }
+    const rootFolderName = files[0].webkitRelativePath.split("/")[0] || "Selected folder";
+    const totalSize = files.reduce((total, file) => total + file.size, 0);
+    summary.textContent = `${rootFolderName}: ${files.length} file${files.length === 1 ? "" : "s"} · ${formatFileSize(totalSize)} · including nested folders`;
+    summary.hidden = false;
+}
+
+function fillSelectedFolderPassword() {
+    const folderSelect = document.getElementById("folderSelect");
+    const folderPasswordInput = document.getElementById("folderPassword");
+    const selectedFolderName = folderSelect?.value || "";
+    if (!folderPasswordInput || folderPasswordInput.value || !selectedFolderName) return;
+
+    const selectedFolder = getStoredFolders().find((folder) => folder.name === selectedFolderName);
+    if (!selectedFolder?.password) return;
+
+    try {
+        folderPasswordInput.value = atob(selectedFolder.password);
+    } catch (error) {
+        console.warn("[SecureVault] Could not fill the selected folder password", error);
+    }
+}
+
+function generateSecretFileKey() {
+    if (!hasSelectedUploadFile()) {
+        showToast("Choose a file before generating a secret key.", "error");
+        return;
+    }
+    const secretKeyInput = document.getElementById("encryptionPassword");
+    const recoveryKeyInput = document.getElementById("recoveryPassword");
+    if (!secretKeyInput) return;
+
+    let secretKey = generateStrongKey();
+    while (secretKey === recoveryKeyInput?.value) secretKey = generateStrongKey();
+    secretKeyInput.value = secretKey;
+    secretKeyInput.dataset.autoGenerated = "true";
+    showToast("A strong secret key has been generated.", "success");
+}
+
+function generateRecoveryFileKey() {
+    if (!hasSelectedUploadFile()) {
+        showToast("Choose a file before generating a recovery key.", "error");
+        return;
+    }
+    const secretKeyInput = document.getElementById("encryptionPassword");
+    const recoveryKeyInput = document.getElementById("recoveryPassword");
+    if (!recoveryKeyInput) return;
+
+    let recoveryKey = generateStrongKey();
+    while (recoveryKey === secretKeyInput?.value) recoveryKey = generateStrongKey();
+    recoveryKeyInput.value = recoveryKey;
+    recoveryKeyInput.dataset.autoGenerated = "true";
+    showToast("A separate strong recovery key has been generated.", "success");
+}
+
+function generateFolderPassword() {
+    const folderPasswordInput = document.getElementById("folderPasswordCreate");
+    const folderRecoveryInput = document.getElementById("folderRecoveryPassword");
+    if (!folderPasswordInput) return;
+
+    let folderPassword = generateStrongKey();
+    while (folderPassword === folderRecoveryInput?.value) folderPassword = generateStrongKey();
+    folderPasswordInput.value = folderPassword;
+    folderPasswordInput.dataset.autoGenerated = "true";
+    showToast("A strong folder password has been generated.", "success");
+}
+
+function generateFolderRecoveryKey() {
+    const folderPasswordInput = document.getElementById("folderPasswordCreate");
+    const folderRecoveryInput = document.getElementById("folderRecoveryPassword");
+    if (!folderRecoveryInput) return;
+
+    let folderRecoveryKey = generateStrongKey();
+    while (folderRecoveryKey === folderPasswordInput?.value) folderRecoveryKey = generateStrongKey();
+    folderRecoveryInput.value = folderRecoveryKey;
+    folderRecoveryInput.dataset.autoGenerated = "true";
+    folderRecoveryInput.select();
+    showToast("A separate strong folder recovery key has been generated.", "success");
+}
+
+function replaceAutoGeneratedKeyOnTyping(event) {
+    const keyInput = event.currentTarget;
+    if (!event.isTrusted || keyInput.dataset.autoGenerated !== "true") return;
+
+    const typedText = event.inputType?.startsWith("insert") ? (event.data || "") : "";
+    keyInput.value = typedText;
+    delete keyInput.dataset.autoGenerated;
+}
+
+function openRecoveryFromDecrypt() {
+    if (!pendingDecryption?.docId) return;
+    const docId = pendingDecryption.docId;
+    closeDecryptDialog();
+    openFileResetDialog(docId);
+}
+
+async function revealOriginalSecretKey() {
+    if (!pendingResetFile) return;
+    const recoveryInput = document.getElementById("fileResetRecoveryPassword");
+    const revealButton = document.getElementById("revealFileKeyButton");
+    const recoveredSecretSection = document.getElementById("recoveredSecretSection");
+    const recoveredSecretInput = document.getElementById("recoveredSecretKey");
+    const recoveryPassword = recoveryInput?.value || "";
+
+    if (!recoveryPassword) {
+        showToast("Enter the recovery key first.", "error");
+        return;
+    }
+
+    setButtonLoading(revealButton, true, "Recovering key");
+    try {
+        const fileDoc = await db.collection("files").doc(pendingResetFile).get();
+        if (!fileDoc.exists) throw new Error("File not found.");
+        const fileData = fileDoc.data();
+        if (!fileData.wrappedOriginalSecret) {
+            throw new Error("This file was created before original-key recovery was available. You can still set a new secret key below.");
+        }
+        const secretBytes = await unwrapKeyWithPassword(fileData.wrappedOriginalSecret, recoveryPassword);
+        if (recoveredSecretInput) {
+            recoveredSecretInput.value = new TextDecoder().decode(secretBytes);
+            recoveredSecretSection.hidden = false;
+        }
+        showToast("Your current secret key has been recovered.", "success");
+    } catch (error) {
+        console.error("[SecureVault] Original secret-key recovery failed", error);
+        showToast(error.message || "The recovery key could not reveal this secret key.", "error");
+    } finally {
+        setButtonLoading(revealButton, false);
+    }
 }
 
 function closeFileResetDialog() {
@@ -610,10 +870,11 @@ async function submitFileReset() {
     const newPasswordInput = document.getElementById("fileResetNewPassword");
     const confirmPasswordInput = document.getElementById("fileResetConfirmPassword");
     const newRecoveryInput = document.getElementById("fileResetNewRecoveryPassword");
-    const recoveryPassword = recoveryInput?.value?.trim() || "";
-    const newPassword = newPasswordInput?.value?.trim() || "";
-    const confirmPassword = confirmPasswordInput?.value?.trim() || "";
-    const newRecoveryPassword = newRecoveryInput?.value?.trim() || "";
+    const recoveryPassword = recoveryInput?.value || "";
+    const newPassword = newPasswordInput?.value || "";
+    const confirmPassword = confirmPasswordInput?.value || "";
+    const newRecoveryPassword = newRecoveryInput?.value || "";
+    const confirmButton = document.getElementById("fileResetConfirmButton");
 
     if (!pendingResetFile) return;
     if (!recoveryPassword || !newPassword || !confirmPassword) {
@@ -625,6 +886,7 @@ async function submitFileReset() {
         return;
     }
 
+    setButtonLoading(confirmButton, true, "Saving new key");
     try {
         const docRef = db.collection("files").doc(pendingResetFile);
         const fileDoc = await docRef.get();
@@ -647,16 +909,22 @@ async function submitFileReset() {
         const fileKey = await unwrapKeyWithPassword(fileData.wrappedRecoveryKey, recoveryPassword);
         const newWrappedFileKey = await wrapKeyWithPassword(fileKey, newPassword);
         const updatePayload = { wrappedFileKey: newWrappedFileKey };
+        const recoveryKeyToKeep = newRecoveryPassword || recoveryPassword;
+        updatePayload.wrappedOriginalSecret = await wrapKeyWithPassword(
+            new TextEncoder().encode(newPassword), recoveryKeyToKeep
+        );
         if (newRecoveryPassword) {
             updatePayload.wrappedRecoveryKey = await wrapKeyWithPassword(fileKey, newRecoveryPassword);
         }
 
         await docRef.update(updatePayload);
         closeFileResetDialog();
-        showToast("File secret key has been reset successfully.", "success");
+        showToast("A new secret key has been saved. Use it for future downloads.", "success");
     } catch (error) {
         console.error("[SecureVault] File reset failed", error);
         showToast(error.message || "Could not reset the file secret key.", "error");
+    } finally {
+        setButtonLoading(confirmButton, false);
     }
 }
 
@@ -676,8 +944,15 @@ function openDecryptDialog(docId, button) {
     if (!modal || !form) return;
     pendingDecryption = { docId, button };
     form.reset();
+    const recoverButton = document.getElementById("recoverFileKeyButton");
+    if (recoverButton) recoverButton.hidden = true;
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
+    db.collection("files").doc(docId).get().then((fileDoc) => {
+        if (fileDoc.exists && recoverButton) {
+            recoverButton.hidden = !fileDoc.data().wrappedRecoveryKey;
+        }
+    }).catch((error) => console.warn("[SecureVault] Could not check recovery-key availability", error));
     window.setTimeout(() => document.getElementById("decryptPassword")?.focus(), 50);
 }
 
@@ -794,34 +1069,85 @@ document.addEventListener("DOMContentLoaded", () => {
     if (loginButton) loginButton.addEventListener("click", handleLogin);
     const signupButton = document.getElementById("signupButton");
     if (signupButton) signupButton.addEventListener("click", handleSignUp);
+    ["encryptionPassword", "recoveryPassword"].forEach((inputId) => {
+        const keyInput = document.getElementById(inputId);
+        if (!keyInput) return;
+        keyInput.addEventListener("input", replaceAutoGeneratedKeyOnTyping);
+    });
+    const secretKeyInput = document.getElementById("encryptionPassword");
+    const recoveryKeyInput = document.getElementById("recoveryPassword");
+    secretKeyInput?.addEventListener("focus", () => {
+        if (hasSelectedUploadFile() && (!secretKeyInput.value || secretKeyInput.dataset.autoGenerated === "true")) {
+            generateSecretFileKey();
+        }
+    });
+    recoveryKeyInput?.addEventListener("focus", () => {
+        if (hasSelectedUploadFile() && (!recoveryKeyInput.value || recoveryKeyInput.dataset.autoGenerated === "true")) {
+            generateRecoveryFileKey();
+        }
+    });
+    ["folderPasswordCreate", "folderRecoveryPassword"].forEach((inputId) => {
+        const keyInput = document.getElementById(inputId);
+        if (!keyInput) return;
+        keyInput.addEventListener("input", replaceAutoGeneratedKeyOnTyping);
+    });
+    const folderPasswordInput = document.getElementById("folderPasswordCreate");
+    const folderRecoveryInput = document.getElementById("folderRecoveryPassword");
+    folderPasswordInput?.addEventListener("focus", () => {
+        if (!folderPasswordInput.value || folderPasswordInput.dataset.autoGenerated === "true") {
+            generateFolderPassword();
+        }
+    });
+    folderRecoveryInput?.addEventListener("focus", () => {
+        if (!folderRecoveryInput.value || folderRecoveryInput.dataset.autoGenerated === "true") {
+            generateFolderRecoveryKey();
+        }
+    });
+    document.getElementById("folderPassword")?.addEventListener("focus", fillSelectedFolderPassword);
+    document.getElementById("folderInput")?.addEventListener("change", updateFolderUploadSummary);
 });
 
 // --- ENCRYPTION AND CLOUD STORAGE ENGINE ---
 async function encryptAndUpload() {
     const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
     const password = document.getElementById('encryptionPassword').value;
-    const recoveryPassword = document.getElementById('recoveryPassword')?.value?.trim() || "";
-    const folderName = document.getElementById('folderSelect')?.value || "";
+    const recoveryPassword = document.getElementById('recoveryPassword')?.value || "";
+    let folderName = document.getElementById('folderSelect')?.value || "";
     let folderPassword = document.getElementById('folderPassword')?.value?.trim() || "";
     const status = document.getElementById('uploadStatus');
     const uploadButton = document.getElementById('uploadButton');
     let fileRef = null;
     let metadataSaved = false;
 
-    if (fileInput.files.length === 0 || !password) {
-        showToast("Choose a file and enter a secret key to continue.", "error");
+    const isNewUpload = uploadQueue.length === 0;
+    if (isNewUpload && (((fileInput?.files?.length || 0) + (folderInput?.files?.length || 0) === 0) || !password)) {
+        showToast("Choose a file or folder and enter a secret key to continue.", "error");
         return;
     }
-
-    const file = fileInput.files[0];
+    if (isNewUpload) {
+        uploadQueue = [...(fileInput?.files || []), ...(folderInput?.files || [])];
+        uploadQueueIndex = 0;
+        uploadedDirectoryName = folderInput?.files?.[0]?.webkitRelativePath?.split("/")[0] || "";
+    }
+    if (uploadQueue.length === 0 || !password) {
+        showToast("Choose a file or folder and enter a secret key to continue.", "error");
+        uploadQueue = [];
+        return;
+    }
+    const file = uploadQueue[uploadQueueIndex];
+    if (!folderName && uploadedDirectoryName) folderName = uploadedDirectoryName;
     console.info("[SecureVault] Encryption engine initialized", {
         algorithm: "AES-GCM",
         keyDerivation: "PBKDF2",
         iterations: 100000
     });
-    setButtonLoading(uploadButton, true, "Encrypting and saving");
-    fileInput.disabled = true;
-    document.getElementById('encryptionPassword').disabled = true;
+    if (isNewUpload) {
+        setButtonLoading(uploadButton, true, "Encrypting and saving");
+        fileInput.disabled = true;
+        if (folderInput) folderInput.disabled = true;
+        document.getElementById('encryptionPassword').disabled = true;
+    }
     status.textContent = "Encrypting your file securely…";
 
     try {
@@ -851,15 +1177,7 @@ async function encryptAndUpload() {
 
         // 5. Store encrypted bytes in Firestore-sized chunks before creating vault metadata.
         fileRef = db.collection("files").doc();
-        const chunkCount = Math.ceil(combined.byteLength / FIRESTORE_CHUNK_SIZE);
-        for (let index = 0; index < chunkCount; index++) {
-            const start = index * FIRESTORE_CHUNK_SIZE;
-            const chunk = combined.slice(start, start + FIRESTORE_CHUNK_SIZE);
-            await fileRef.collection("chunks").doc(String(index).padStart(6, "0")).set({
-                data: bytesToBase64(chunk),
-                ownerID: auth.currentUser.uid
-            });
-        }
+        const chunkCount = await saveEncryptedChunks(fileRef, combined);
 
         if (folderName && !folderPassword) {
             const storedFolder = getStoredFolders().find((folder) => folder.name === folderName);
@@ -875,7 +1193,9 @@ async function encryptAndUpload() {
         const wrappedMainKey = await wrapKeyWithPassword(fileKeyBytes, password);
         const metadata = {
             ownerID: auth.currentUser.uid,
-            fileName: file.name,
+            fileName: file.webkitRelativePath
+                ? file.webkitRelativePath.split("/").slice(1).join("/")
+                : file.name,
             chunkCount: chunkCount,
             cipherVersion: 2,
             wrappedFileKey: wrappedMainKey,
@@ -891,21 +1211,40 @@ async function encryptAndUpload() {
 
         if (recoveryPassword) {
             metadata.wrappedRecoveryKey = await wrapKeyWithPassword(fileKeyBytes, recoveryPassword);
+            metadata.wrappedOriginalSecret = await wrapKeyWithPassword(
+                new TextEncoder().encode(password), recoveryPassword
+            );
         }
 
         await fileRef.set(metadata);
         metadataSaved = true;
         console.info("[SecureVault] Cloud sync complete", { fileName: file.name });
 
+        uploadQueueIndex += 1;
+        if (uploadQueueIndex < uploadQueue.length) {
+            status.textContent = `Saved ${uploadQueueIndex} of ${uploadQueue.length} files. Continuing…`;
+            await encryptAndUpload();
+            return;
+        }
+
         status.textContent = "";
-        showToast("Your file has been encrypted and saved to the vault.", "success");
+        showToast(`${uploadQueue.length} item${uploadQueue.length === 1 ? "" : "s"} encrypted and saved to the vault.`, "success");
         fileInput.value = "";
+        if (folderInput) folderInput.value = "";
+        const folderUploadSummary = document.getElementById("folderUploadSummary");
+        if (folderUploadSummary) folderUploadSummary.hidden = true;
         document.getElementById('encryptionPassword').value = "";
         document.getElementById('recoveryPassword').value = "";
         document.getElementById('folderPassword').value = "";
+        uploadQueue = [];
+        uploadQueueIndex = 0;
+        uploadedDirectoryName = "";
         
     } catch (error) {
         console.error(error);
+        uploadQueue = [];
+        uploadQueueIndex = 0;
+        uploadedDirectoryName = "";
         if (fileRef && !metadataSaved) {
             try {
                 await deleteFileChunks(fileRef);
@@ -916,9 +1255,12 @@ async function encryptAndUpload() {
         status.textContent = "";
         showToast(getFriendlyUploadError(error), "error");
     } finally {
-        setButtonLoading(uploadButton, false);
-        fileInput.disabled = false;
-        document.getElementById('encryptionPassword').disabled = false;
+        if (isNewUpload) {
+            setButtonLoading(uploadButton, false);
+            fileInput.disabled = false;
+            if (folderInput) folderInput.disabled = false;
+            document.getElementById('encryptionPassword').disabled = false;
+        }
     }
 }
 
@@ -998,7 +1340,7 @@ function loadVault() {
                                   </div>
                                   <div class="file-actions">
                                       <button onclick="openDecryptDialog('${doc.id}', this)" class="btn btn-sm btn-success">Decrypt & Download</button>
-                                      ${file.wrappedRecoveryKey ? `<button onclick="openFileResetDialog('${doc.id}')" class="btn btn-sm btn-warning">Reset key</button>` : ``}
+                                      ${file.wrappedRecoveryKey ? `<button onclick="openFileResetDialog('${doc.id}')" class="btn btn-sm btn-warning">Recover key</button>` : ``}
                                       <button onclick="openDeleteDialog('${doc.id}', this)" class="btn btn-sm btn-delete">Delete</button>
                                   </div>
                               </div>
@@ -1137,6 +1479,7 @@ async function decryptAndDownload() {
         const encryptedContent = bytes.slice(12);
 
         let fileKey = null;
+        let usedRecoveryKey = false;
         if (fileData.folderPassword) {
             const folderPasswordMatches = fileData.folderPassword === btoa(folderPassword);
             if (!folderPasswordMatches) {
@@ -1151,6 +1494,7 @@ async function decryptAndDownload() {
                 if (fileData.wrappedRecoveryKey) {
                     try {
                         fileKey = await unwrapKeyWithPassword(fileData.wrappedRecoveryKey, password);
+                        usedRecoveryKey = true;
                     } catch (recoveryKeyError) {
                         throw new Error("Wrong secret key or recovery key.");
                     }
@@ -1214,7 +1558,12 @@ async function decryptAndDownload() {
             loadStoredFolders();
         }
         pendingDecryption = null;
-        showToast("Your file has been decrypted and is downloading.", "success");
+        showToast(
+            usedRecoveryKey
+                ? "Your recovery key worked. Use ‘Recover key’ to save a new secret key."
+                : "Your file has been decrypted and is downloading.",
+            "success"
+        );
         refreshVault();
 
     } catch (error) {

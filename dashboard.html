@@ -40,23 +40,30 @@
                 </div>
                 <div class="field-group">
                     <label class="form-label" for="fileInput">Choose file</label>
-                    <input type="file" id="fileInput" class="form-control file-control">
+                    <input type="file" id="fileInput" class="form-control file-control" multiple>
+                    <p class="field-hint">You can select one or more files.</p>
+                </div>
+                <div class="field-group">
+                    <label class="form-label" for="folderInput">Choose folder</label>
+                    <input type="file" id="folderInput" class="form-control file-control" webkitdirectory directory multiple>
+                    <p class="field-hint">Nested folders are included and saved with their folder paths.</p>
+                    <div id="folderUploadSummary" class="folder-upload-summary" hidden aria-live="polite"></div>
                 </div>
                 <div class="field-group">
                     <label class="form-label" for="encryptionPassword">Secret key</label>
                     <div class="password-field">
-                        <input type="password" id="encryptionPassword" class="form-control" placeholder="Create a strong secret key" autocomplete="new-password">
+                        <input type="password" id="encryptionPassword" name="encryption-secret-key" class="form-control" placeholder="Create a strong secret key" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('encryptionPassword', this)" aria-label="Show secret key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
-                    <p class="field-hint">Keep this key safe. It is required to download your file later.</p>
+                    <p class="field-hint">After choosing a file, click this field to generate a strong key. Start typing to replace it with your own key.</p>
                 </div>
                 <div class="field-group">
                     <label class="form-label" for="recoveryPassword">Recovery key (optional)</label>
                     <div class="password-field">
-                        <input type="password" id="recoveryPassword" class="form-control" placeholder="Optional backup key" autocomplete="new-password">
+                        <input type="password" id="recoveryPassword" name="encryption-recovery-key" class="form-control" placeholder="Optional backup key" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('recoveryPassword', this)" aria-label="Show recovery key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
-                    <p class="field-hint">Use this as an alternate key if you want a backup unlock option. Keep this recovery key safe and do not share it.</p>
+                    <p class="field-hint">After choosing a file, click this field to generate a separate strong backup key. Start typing to replace it with your own key.</p>
                 </div>
 
                 <div class="field-group">
@@ -68,10 +75,10 @@
                 <div class="field-group">
                     <label class="form-label" for="folderPassword">Folder password (optional)</label>
                     <div class="password-field">
-                        <input type="password" id="folderPassword" class="form-control" placeholder="Folder unlock password" autocomplete="new-password">
+                        <input type="password" id="folderPassword" name="selected-folder-password" class="form-control" placeholder="Folder unlock password" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('folderPassword', this)" aria-label="Show folder password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
-                    <p class="field-hint">Use this only if you want the file to be unlockable with a folder password.</p>
+                    <p class="field-hint">Select a folder, then click this empty field to fill its saved password.</p>
                 </div>
 
                 <div class="field-group">
@@ -81,17 +88,18 @@
                 <div class="field-group">
                     <label class="form-label" for="folderPasswordCreate">Folder password</label>
                     <div class="password-field">
-                        <input type="password" id="folderPasswordCreate" class="form-control" placeholder="Create a folder password" autocomplete="new-password">
+                        <input type="password" id="folderPasswordCreate" name="folder-password" class="form-control" placeholder="Create a folder password" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('folderPasswordCreate', this)" aria-label="Show folder password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
+                    <p class="field-hint">Click this field to generate a strong folder password. Start typing to replace it with your own password.</p>
                 </div>
                 <div class="field-group">
                     <label class="form-label" for="folderRecoveryPassword">Folder recovery key (optional)</label>
                     <div class="password-field">
-                        <input type="password" id="folderRecoveryPassword" class="form-control" placeholder="Optional folder recovery code" autocomplete="new-password">
+                        <input type="password" id="folderRecoveryPassword" name="folder-recovery-key" class="form-control" placeholder="Optional folder recovery code" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('folderRecoveryPassword', this)" aria-label="Show recovery key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
-                    <p class="field-hint">If you forget the folder password, this recovery key can unlock the folder.</p>
+                    <p class="field-hint">Click this field to generate a strong recovery key. You may replace it with your own key, including the same value as the folder password.</p>
                 </div>
                 <button id="createFolderButton" type="button" onclick="createFolder()" class="btn btn-quiet btn-full">Create folder</button>
                 <div id="folderContainer" class="file-list"></div>
@@ -130,7 +138,7 @@
             <button class="modal-close" type="button" onclick="closeDecryptDialog()" aria-label="Close dialog">×</button>
             <span class="modal-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
             <h2 id="decryptModalTitle">Unlock your file</h2>
-            <p>Enter the secret key or recovery key you used when this file was encrypted.</p>
+            <p>Enter your secret key to download the file. If you forgot it, use the recovery option below to set a replacement key.</p>
             <form id="decryptForm" onsubmit="decryptAndDownload(); return false;">
                 <label class="form-label" for="decryptPassword">Secret key</label>
                 <div class="password-field">
@@ -144,6 +152,7 @@
                 </div>
                 <div class="modal-actions">
                     <button id="cancelDecryptButton" type="button" class="btn btn-quiet" onclick="closeDecryptDialog()">Cancel</button>
+                    <button id="recoverFileKeyButton" type="button" class="btn btn-quiet" onclick="openRecoveryFromDecrypt()" hidden>Forgot key?</button>
                     <button id="decryptConfirmButton" type="submit" class="btn btn-primary">Decrypt file</button>
                 </div>
             </form>
@@ -178,13 +187,20 @@
             <button class="modal-close" type="button" onclick="closeFolderResetDialog()" aria-label="Close dialog">×</button>
             <span class="modal-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a4 4 0 0 1 4 4v3h1.5a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6.5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2H8V7a4 4 0 0 1 4-4Z"/><path d="M9 12h6"/></svg></span>
             <h2 id="folderResetModalTitle">Reset folder password</h2>
-            <p>Enter the folder recovery key to set a new password for this folder and its files.</p>
+            <p>Enter the folder recovery key to reveal the current password or set a new one.</p>
             <form id="folderResetForm" onsubmit="submitFolderReset(); return false;">
                 <p class="modal-subtitle">Folder: <strong id="folderResetName"></strong></p>
                 <label class="form-label" for="folderResetRecoveryPassword">Folder recovery key</label>
                 <div class="password-field">
                     <input id="folderResetRecoveryPassword" class="form-control" type="password" autocomplete="new-password" placeholder="Enter folder recovery key" required>
                     <button class="password-toggle" type="button" onclick="togglePasswordVisibility('folderResetRecoveryPassword', this)" aria-label="Show recovery key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                </div>
+                <div id="recoveredFolderPasswordSection" class="field-group" hidden>
+                    <label class="form-label" for="recoveredFolderPassword">Current folder password</label>
+                    <div class="password-field">
+                        <input id="recoveredFolderPassword" class="form-control" type="password" readonly>
+                        <button class="password-toggle" type="button" onclick="togglePasswordVisibility('recoveredFolderPassword', this)" aria-label="Show current folder password" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                    </div>
                 </div>
                 <label class="form-label" for="folderResetNewPassword">New folder password</label>
                 <div class="password-field">
@@ -198,6 +214,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-quiet" onclick="closeFolderResetDialog()">Cancel</button>
+                    <button type="button" class="btn btn-quiet" onclick="revealFolderPassword()">Reveal current password</button>
                     <button type="submit" class="btn btn-primary">Reset folder</button>
                 </div>
             </form>
@@ -210,12 +227,21 @@
             <button class="modal-close" type="button" onclick="closeFileResetDialog()" aria-label="Close dialog">×</button>
             <span class="modal-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a4 4 0 0 1 4 4v3h1.5a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6.5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2H8V7a4 4 0 0 1 4-4Z"/><path d="M9 12h6"/></svg></span>
             <h2 id="fileResetModalTitle">Reset file secret key</h2>
-            <p>Use the file recovery key to assign a new secret key and optionally set a new recovery key.</p>
+            <p>Use the recovery key to reveal the current secret key or create a replacement key.</p>
+            <p id="legacyRecoveryNotice" class="field-hint" hidden></p>
             <form id="fileResetForm" onsubmit="submitFileReset(); return false;">
                 <label class="form-label" for="fileResetRecoveryPassword">File recovery key</label>
                 <div class="password-field">
                     <input id="fileResetRecoveryPassword" class="form-control" type="password" autocomplete="new-password" placeholder="Enter file recovery key" required>
                     <button class="password-toggle" type="button" onclick="togglePasswordVisibility('fileResetRecoveryPassword', this)" aria-label="Show recovery key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                </div>
+                <div id="recoveredSecretSection" class="field-group" hidden>
+                    <label class="form-label" for="recoveredSecretKey">Recovered current secret key</label>
+                    <div class="password-field">
+                        <input id="recoveredSecretKey" class="form-control" type="password" readonly>
+                        <button class="password-toggle" type="button" onclick="togglePasswordVisibility('recoveredSecretKey', this)" aria-label="Show recovered secret key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
+                    </div>
+                    <p class="field-hint">Keep this key private. You may instead replace it below.</p>
                 </div>
                 <label class="form-label" for="fileResetNewPassword">New secret key</label>
                 <div class="password-field">
@@ -234,7 +260,8 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-quiet" onclick="closeFileResetDialog()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Reset file key</button>
+                    <button id="revealFileKeyButton" type="button" class="btn btn-quiet" onclick="revealOriginalSecretKey()">Reveal current key</button>
+                    <button id="fileResetConfirmButton" type="submit" class="btn btn-primary">Save new key</button>
                 </div>
             </form>
         </div>
