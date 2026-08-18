@@ -64,6 +64,7 @@
                         <button class="password-toggle" type="button" onclick="togglePasswordVisibility('recoveryPassword', this)" aria-label="Show recovery key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button>
                     </div>
                     <p class="field-hint">After choosing a file, click this field to generate a separate strong backup key. Start typing to replace it with your own key.</p>
+                    <button type="button" class="btn btn-quiet generate-keys-button" onclick="openKeyBackupDialog()">Download encrypted key backup</button>
                 </div>
 
                 <div class="field-group">
@@ -277,6 +278,23 @@
             <div class="modal-actions">
                 <button id="cancelDeleteButton" type="button" class="btn btn-quiet" onclick="closeDeleteDialog()">Keep file</button>
                 <button id="deleteConfirmButton" type="button" class="btn btn-danger" onclick="deleteStoredFile()">Delete file</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="keyBackupModal" class="app-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="keyBackupModalTitle">
+        <div class="app-modal-backdrop" onclick="closeKeyBackupDialog()"></div>
+        <div class="app-modal-card">
+            <button class="modal-close" type="button" onclick="closeKeyBackupDialog()" aria-label="Close dialog">×</button>
+            <h2 id="keyBackupModalTitle">Download encrypted key backup</h2>
+            <p>Create a separate backup password. It encrypts the backup file and is never uploaded or emailed.</p>
+            <label class="form-label" for="keyBackupPassword">Backup password</label>
+            <input id="keyBackupPassword" class="form-control" type="password" autocomplete="new-password" placeholder="Create a backup password">
+            <label class="form-label" for="keyBackupPasswordConfirm">Confirm backup password</label>
+            <input id="keyBackupPasswordConfirm" class="form-control" type="password" autocomplete="new-password" placeholder="Confirm backup password">
+            <div class="modal-actions">
+                <button type="button" class="btn btn-quiet" onclick="closeKeyBackupDialog()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="downloadEncryptedKeyBackup()">Download backup</button>
             </div>
         </div>
     </div>

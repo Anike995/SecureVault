@@ -938,6 +938,63 @@ function showToast(message, type = "info") {
     window.setTimeout(() => toast.remove(), 4500);
 }
 
+function openKeyBackupDialog() {
+    const secretKey = document.getElementById("encryptionPassword")?.value || "";
+    if (!secretKey) {
+        showToast("Enter or generate a secret key before creating a backup.", "error");
+        return;
+    }
+    document.getElementById("keyBackupPassword").value = "";
+    document.getElementById("keyBackupPasswordConfirm").value = "";
+    const modal = document.getElementById("keyBackupModal");
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => document.getElementById("keyBackupPassword")?.focus(), 50);
+}
+
+function closeKeyBackupDialog() {
+    const modal = document.getElementById("keyBackupModal");
+    if (!modal) return;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function downloadEncryptedKeyBackup() {
+    const secretKey = document.getElementById("encryptionPassword")?.value || "";
+    const recoveryKey = document.getElementById("recoveryPassword")?.value || "";
+    const backupPassword = document.getElementById("keyBackupPassword")?.value || "";
+    const confirmation = document.getElementById("keyBackupPasswordConfirm")?.value || "";
+    if (!secretKey || !backupPassword) {
+        showToast("Enter the secret key and a backup password.", "error");
+        return;
+    }
+    if (backupPassword !== confirmation) {
+        showToast("The backup passwords do not match.", "error");
+        return;
+    }
+    try {
+        const backup = {
+            version: 1,
+            createdAt: new Date().toISOString(),
+            encryptedKeys: await wrapKeyWithPassword(
+                new TextEncoder().encode(JSON.stringify({ secretKey, recoveryKey })),
+                backupPassword
+            )
+        };
+        const backupUrl = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: "application/json" }));
+        const link = document.createElement("a");
+        link.href = backupUrl;
+        link.download = "securevault-encrypted-key-backup.json";
+        link.click();
+        URL.revokeObjectURL(backupUrl);
+        closeKeyBackupDialog();
+        showToast("Encrypted key backup downloaded. Keep its backup password safe.", "success");
+    } catch (error) {
+        console.error("[SecureVault] Key backup failed", error);
+        showToast("The encrypted key backup could not be created.", "error");
+    }
+}
+
 function openDecryptDialog(docId, button) {
     const modal = document.getElementById("decryptModal");
     const form = document.getElementById("decryptForm");
@@ -1228,7 +1285,8 @@ async function encryptAndUpload() {
         }
 
         status.textContent = "";
-        showToast(`${uploadQueue.length} item${uploadQueue.length === 1 ? "" : "s"} encrypted and saved to the vault.`, "success");
+        const uploadedItemCount = uploadQueue.length;
+        showToast(`${uploadedItemCount} item${uploadedItemCount === 1 ? "" : "s"} encrypted and saved to the vault.`, "success");
         fileInput.value = "";
         if (folderInput) folderInput.value = "";
         const folderUploadSummary = document.getElementById("folderUploadSummary");
